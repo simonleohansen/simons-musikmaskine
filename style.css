@@ -85,6 +85,8 @@ input[type="number"], input[type="text"], #projName {
 .patChip.hasData { color: var(--text); }
 .patChip.cur.hasData { color: #0b0b0d; }
 .patChip.playing { box-shadow: 0 0 8px var(--acid); }
+.patChip.queued { border-color: var(--amber); color: var(--amber); animation: queueBlink 0.5s steps(2) infinite; }
+@keyframes queueBlink { to { background: #241703; } }
 #modeBox { display: flex; margin-left: 10px; }
 #modeBox button { border-radius: 0; }
 #modeBox button:first-child { border-radius: 4px 0 0 4px; }
@@ -95,9 +97,35 @@ input[type="number"], input[type="text"], #projName {
   padding: 3px 6px; font-size: 11px; font-weight: 800;
   display: flex; align-items: center; gap: 4px;
 }
+.songChip .reps { color: var(--acid); font-size: 9px; font-weight: 800; }
+.songChip .marks { color: var(--amber); font-size: 8px; font-weight: 800; letter-spacing: 0.02em; }
 .songChip .x { color: var(--dim); font-size: 9px; }
 .songChip .x:hover { color: var(--hot); }
-.songChip.playing { color: var(--acid); border-color: var(--acid); }
+.songChip.playing { color: var(--acid); border-color: var(--acid); box-shadow: 0 0 8px var(--acid); }
+#jamBtn { color: var(--dim); font-weight: 800; white-space: nowrap; }
+#jamBtn.on { color: #fff; background: var(--hot); border-color: var(--hot); animation: queueBlink 0.8s steps(2) infinite; }
+
+/* song-trin-editor */
+#entPop {
+  position: fixed; z-index: 200;
+  display: flex; flex-direction: column; gap: 8px;
+  background: var(--panel); border: 1px solid var(--acid); border-radius: 6px;
+  padding: 10px 12px; box-shadow: 0 8px 30px #000c;
+  width: 260px;
+}
+#entPop label, #entPop .entRow { display: flex; align-items: center; gap: 6px; font-size: 9px; font-weight: 700; color: var(--dim); }
+#entPop b { min-width: 18px; text-align: center; color: var(--text); font-size: 12px; }
+#entPop button { padding: 3px 7px; font-size: 9px; }
+#entPop input[type="range"] { flex: 1; accent-color: var(--amber); }
+#entPop input[type="range"].unset { opacity: 0.35; }
+.muteDots { display: flex; gap: 4px; flex: 1; }
+.muteDot {
+  width: 16px; height: 16px; padding: 0; border-radius: 4px;
+  background: var(--c); border: 1px solid transparent;
+}
+.muteDot.muted { background: var(--panel2); border-color: var(--c); opacity: 0.7; }
+.entToggles { display: flex; gap: 5px; }
+.entToggles button { flex: 1; }
 
 /* ---------- sequencer ---------- */
 #seq {

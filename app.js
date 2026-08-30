@@ -1,6 +1,6 @@
 // SIMONS MUSIKMASKINE — UI og tilstand (v2: duck/pump, osc2, ADSR, choke, crush,
 // probability, ratchets, conditions, polymeter, FILL, euclid/rotate-vaerktoejer)
-import { Player, renderWav, noteName, cutHz } from './engine.js';
+import { Player, renderWav, noteName, cutHz, songEntry } from './engine.js';
 
 const $ = id => document.getElementById(id);
 const PATTERN_NAMES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
@@ -125,6 +125,7 @@ function migrate(s) {
   s.patterns.forEach(P => { if (!P.tlen) P.tlen = new Array(8).fill(null); });
   if (s.pumpFx === undefined) s.pumpFx = 0.4;
   if (s.duckTrack === undefined) s.duckTrack = 0;
+  s.song = (s.song || []).map(e => typeof e === 'number' ? { p: e, reps: 1, mutes: null } : e);
   s._fill = false;
   return s;
 }
@@ -310,9 +311,12 @@ let ctxMenuEl = null;
 function closeMenus() {
   if (ctxMenuEl) { ctxMenuEl.remove(); ctxMenuEl = null; }
   const e = $('eucPop'); if (e) e.remove();
+  const s = $('entPop'); if (s) s.remove();
 }
 window.addEventListener('pointerdown', e => {
   if (ctxMenuEl && !ctxMenuEl.contains(e.target)) closeMenus();
+  const ep = $('entPop');
+  if (ep && !ep.contains(e.target) && !e.target.closest('.songChip')) ep.remove();
 });
 function openTrackMenu(e, ti) {
   closeMenus();
@@ -523,9 +527,19 @@ function renderPatternChips() {
   el.innerHTML = '';
   st.patterns.forEach((p, i) => {
     const b = document.createElement('button');
-    b.className = 'patChip' + (i === st.curPattern ? ' cur' : '') + (patternHasData(p) ? ' hasData' : '');
+    b.className = 'patChip' + (i === st.curPattern ? ' cur' : '') + (patternHasData(p) ? ' hasData' : '')
+      + (st._queuedPattern === i ? ' queued' : '');
     b.textContent = PATTERN_NAMES[i];
-    b.onclick = () => { st.curPattern = i; lockSel = null; persist(); renderAll(); };
+    b.onclick = () => {
+      // under afspilning i pattern-mode: skift kvantiseret ved pattern-graensen
+      if (player.playing && st.mode === 'pattern' && i !== st.curPattern) {
+        st._queuedPattern = (st._queuedPattern === i) ? null : i;
+        renderPatternChips();
+        return;
+      }
+      st._queuedPattern = null;
+      st.curPattern = i; lockSel = null; persist(); renderAll();
+    };
     el.appendChild(b);
   });
   $('patLen').textContent = pat().len;
@@ -548,30 +562,100 @@ $('patClear').onclick = () => {
   persist(); renderAll();
 };
 
-// ---------- song-mode ----------
+// ---------- song-mode (arrangements-trin) ----------
 function renderSong() {
   $('modePattern').className = st.mode === 'pattern' ? 'on' : '';
   $('modeSong').className = st.mode === 'song' ? 'on' : '';
   $('songLoopBtn').className = st.songLoop ? 'on' : '';
   const el = $('songChain');
   el.innerHTML = '';
-  st.song.forEach((pi, i) => {
+  st.song.forEach((raw, i) => {
+    const e = songEntry(raw);
     const c = document.createElement('button');
     c.className = 'songChip';
-    c.innerHTML = `${PATTERN_NAMES[pi]}<span class="x">✕</span>`;
-    c.onclick = e => {
-      if (e.target.closest('.x')) {
+    const marks = [];
+    if (e.mutes && e.mutes.some(Boolean)) marks.push('M');
+    if (e.mf !== undefined && e.mf !== null) marks.push('FLT');
+    if (e.riser) marks.push('↗');
+    if (e.boom) marks.push('✸');
+    if (e.fillLast) marks.push('FILL');
+    c.innerHTML = `${PATTERN_NAMES[e.p]}${(e.reps || 1) > 1 ? `<span class="reps">×${e.reps}</span>` : ''}`
+      + (marks.length ? `<span class="marks">${marks.join('·')}</span>` : '')
+      + '<span class="x">✕</span>';
+    c.onclick = ev => {
+      if (ev.target.closest('.x')) {
         st.song.splice(i, 1);
-      } else {
-        st.curPattern = pi;
-        lockSel = null;
+        persist(); renderSong();
+        return;
       }
-      persist(); renderAll();
+      openSongEntry(ev, i);
     };
     el.appendChild(c);
   });
 }
-$('songAdd').onclick = () => { st.song.push(st.curPattern); persist(); renderSong(); };
+// trin-editor: gentagelser, mute-maske, filter-automation, riser/boom/autofill
+function openSongEntry(ev, idx) {
+  closeMenus();
+  const e = songEntry(st.song[idx]);
+  st.song[idx] = e;
+  const pop = document.createElement('div');
+  pop.id = 'entPop';
+  const dots = st.tracks.map((tr, i) =>
+    `<button class="muteDot" data-i="${i}" title="${tr.name}" style="--c:${tr.color}"></button>`).join('');
+  pop.innerHTML = `<div class="eucTitle">TRIN ${idx + 1} · PATTERN ${PATTERN_NAMES[e.p]}</div>
+    <label>GENTAG <button id="entRD">−</button> <b id="entRV"></b> <button id="entRI">+</button>
+      <button id="entGoto" style="margin-left:auto">GÅ TIL PATTERN</button></label>
+    <div class="entRow"><span class="plabel">SPOR</span><div class="muteDots">${dots}</div><button id="entMClr">ALLE MED</button></div>
+    <div class="entRow"><span class="plabel">FLT SLUT</span>
+      <input id="entMF" type="range" min="0" max="1" step="0.01"><b id="entMFV">—</b><button id="entMFX">✕</button></div>
+    <div class="entToggles">
+      <button id="entRiser" title="Noise-riser der stiger gennem hele trinnet og slutter ved næste trin">↗ RISER</button>
+      <button id="entBoom" title="Dybt nedslag + crash på trinnets første slag">✸ BOOM</button>
+      <button id="entFill" title="FILL-steps spiller automatisk i trinnets sidste gennemløb">AUTOFILL</button>
+    </div>
+    <div class="eucBtns"><button id="entDup">⧉ DUPLIKÉR</button><button id="entClose">LUK</button></div>`;
+  pop.style.left = Math.min(ev.clientX - 40, innerWidth - 280) + 'px';
+  pop.style.top = Math.min(ev.clientY + 14, innerHeight - 250) + 'px';
+  document.body.appendChild(pop);
+  pop.onpointerdown = evt => evt.stopPropagation();
+  const q = s => pop.querySelector(s);
+  const sync = () => {
+    q('#entRV').textContent = e.reps || 1;
+    pop.querySelectorAll('.muteDot').forEach(d => {
+      d.classList.toggle('muted', !!(e.mutes && e.mutes[+d.dataset.i]));
+    });
+    const has = e.mf !== undefined && e.mf !== null;
+    q('#entMF').value = has ? e.mf : 0.5;
+    q('#entMF').classList.toggle('unset', !has);
+    q('#entMFV').textContent = has ? (Math.abs(e.mf - 0.5) < 0.01 ? 'OPEN' : (e.mf < 0.5 ? 'LP' : 'HP')) : '—';
+    q('#entRiser').classList.toggle('on', !!e.riser);
+    q('#entBoom').classList.toggle('on', !!e.boom);
+    q('#entFill').classList.toggle('on', !!e.fillLast);
+    renderSong();
+  };
+  q('#entRD').onclick = () => { e.reps = Math.max(1, (e.reps || 1) - 1); persist(); sync(); };
+  q('#entRI').onclick = () => { e.reps = Math.min(64, (e.reps || 1) + 1); persist(); sync(); };
+  q('#entGoto').onclick = () => { st.curPattern = e.p; lockSel = null; persist(); renderAll(); };
+  pop.querySelectorAll('.muteDot').forEach(d => {
+    d.onclick = () => {
+      const i = +d.dataset.i;
+      e.mutes = e.mutes || new Array(8).fill(false);
+      e.mutes[i] = !e.mutes[i];
+      if (!e.mutes.some(Boolean)) e.mutes = null;
+      persist(); sync();
+    };
+  });
+  q('#entMClr').onclick = () => { e.mutes = null; persist(); sync(); };
+  q('#entMF').oninput = () => { e.mf = +q('#entMF').value; persist(); sync(); };
+  q('#entMFX').onclick = () => { delete e.mf; persist(); sync(); };
+  q('#entRiser').onclick = () => { e.riser = !e.riser; if (!e.riser) delete e.riser; persist(); sync(); };
+  q('#entBoom').onclick = () => { e.boom = !e.boom; if (!e.boom) delete e.boom; persist(); sync(); };
+  q('#entFill').onclick = () => { e.fillLast = !e.fillLast; if (!e.fillLast) delete e.fillLast; persist(); sync(); };
+  q('#entDup').onclick = () => { st.song.splice(idx + 1, 0, snapshot(e)); persist(); renderSong(); pop.remove(); };
+  q('#entClose').onclick = () => pop.remove();
+  sync();
+}
+$('songAdd').onclick = () => { st.song.push({ p: st.curPattern, reps: 1, mutes: null }); persist(); renderSong(); };
 $('songLoopBtn').onclick = () => { st.songLoop = !st.songLoop; persist(); renderSong(); };
 $('modePattern').onclick = () => { st.mode = 'pattern'; persist(); renderSong(); };
 $('modeSong').onclick = () => {
@@ -605,6 +689,12 @@ $('fillBtn').onpointerleave = () => setFill(false);
 window.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+  if (e.shiftKey && /^Digit[1-8]$/.test(e.code)) {          // shift+1-8 = mute-toggle (performance)
+    const i = +e.code.slice(5) - 1;
+    st.tracks[i].mute = !st.tracks[i].mute;
+    persist(); renderSeq(); player.refreshTrackGains();
+    return;
+  }
   if (e.key >= '1' && e.key <= '8') selectTrack(+e.key - 1);
   if ((e.key === 'f' || e.key === 'F') && !e.repeat) setFill(true);
   if (e.key === 'Escape') { if (lockSel) exitLock(); closeMenus(); }
@@ -625,14 +715,63 @@ function mfLabel() {
 }
 $('projName').addEventListener('input', () => { st.name = $('projName').value; persist(); });
 
+// ---------- JAM-optagelse: performances fanges som song-kaede ----------
+let jam = null; // {entries: [], lastKey}
+$('jamBtn').onclick = () => {
+  if (jam) { finishJam(); return; }
+  if (st.mode !== 'pattern') { st.mode = 'pattern'; persist(); renderSong(); }
+  jam = { entries: [], lastKey: null };
+  // egen timer (ikke rAF): capture skal koere selv naar fanen er i baggrunden
+  jam.timer = setInterval(() => {
+    if (!jam) return;
+    const pos = player.position();
+    if (pos && st.mode === 'pattern') jamCapture(pos);
+  }, 100);
+  $('jamBtn').classList.add('on');
+  $('jamBtn').textContent = '● JAM…';
+  if (!player.playing) togglePlay();
+  toast('JAM optager: skift patterns og mutes — tryk ● igen for at gemme som sang');
+};
+function finishJam() {
+  clearInterval(jam.timer);
+  const entries = jam.entries;
+  jam = null;
+  $('jamBtn').classList.remove('on');
+  $('jamBtn').textContent = '● JAM';
+  if (!entries.length) { toast('Intet optaget endnu', true); return; }
+  if (entries.every(e => !e.mutes.some(Boolean))) entries.forEach(e => { e.mutes = null; });
+  st.song = entries;
+  persist(); renderSong();
+  toast(`Jam gemt som song-kæde: ${entries.length} trin — skift til SONG og hør den`);
+}
+function jamCapture(pos) {
+  const len = st.patterns[pos.pattern].len;
+  const key = pos.pattern + ':' + Math.floor(pos.abs / len);
+  if (jam.lastKey === key) return;
+  jam.lastKey = key;
+  const mutes = st.tracks.map(t => !!t.mute);
+  const last = jam.entries[jam.entries.length - 1];
+  if (last && last.p === pos.pattern && JSON.stringify(last.mutes) === JSON.stringify(mutes)) {
+    last.reps++;
+  } else {
+    jam.entries.push({ p: pos.pattern, reps: 1, mutes });
+  }
+  $('jamBtn').textContent = `● JAM (${jam.entries.reduce((a, e) => a + e.reps, 0)})`;
+}
+
 // spillende kolonne-LED + pattern-chip (polymeter: hvert spor sin egen kolonne)
-let lastLED = null;
+let lastLED = null, lastShownPattern = null;
 function clearPlayLEDs() {
   document.querySelectorAll('.stp.playcol').forEach(x => x.classList.remove('playcol'));
   document.querySelectorAll('.patChip.playing, .songChip.playing').forEach(x => x.classList.remove('playing'));
   lastLED = null;
 }
 function tick() {
+  // koeet pattern-skift anvendt af motoren -> gengiv grid'et
+  if (lastShownPattern !== st.curPattern) {
+    lastShownPattern = st.curPattern;
+    renderAll();
+  }
   const pos = player.position();
   if (pos) {
     const key = pos.pattern + ':' + pos.abs;
@@ -646,6 +785,13 @@ function tick() {
         });
       }
       document.querySelectorAll('.patChip').forEach((c, i) => c.classList.toggle('playing', i === pos.pattern && player.playing));
+      document.querySelectorAll('.songChip').forEach((c, i) => c.classList.toggle('playing', i === pos.songIdx && player.playing));
+    }
+    // filter-automationen bevæger master-slideren live
+    if (player.autoMF != null && st.mode === 'song') {
+      $('mFilter').value = player.autoMF;
+      const v = player.autoMF;
+      $('mFilterVal').textContent = Math.abs(v - 0.5) < 0.01 ? 'OPEN' : (v < 0.5 ? 'LP' : 'HP');
     }
   }
   requestAnimationFrame(tick);

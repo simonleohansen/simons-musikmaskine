@@ -144,19 +144,103 @@ export async function buildRig(ctx, st) {
 }
 export function trackGainVal(st, tr) {
   const anySolo = st.tracks.some(t => t.solo);
-  const audible = anySolo ? tr.solo : !tr.mute;
+  const audible = anySolo ? tr.solo : !(tr.mute || tr._emute); // _emute = song-trins mute-maske
   return audible ? tr.level : 0;
 }
 export function delayTimeSec(st) {
   // punkteret 8.-del som standard; st.delayDiv i 16.-dele (3 = punkteret 8.)
   return (60 / st.bpm / 4) * (st.delayDiv ?? 3);
 }
-export function setMasterFilter(rig, v) {
+export function mfFreqs(v) {
   let lpF = 18000, hpF = 22;
   if (v < 0.5) lpF = 60 * Math.pow(18000 / 60, v / 0.5);
   else if (v > 0.5) hpF = 22 * Math.pow(6000 / 22, (v - 0.5) / 0.5);
-  rig.lp.frequency.value = lpF;
-  rig.hp.frequency.value = hpF;
+  return { lpF, hpF };
+}
+export function setMasterFilter(rig, v) {
+  const f = mfFreqs(v);
+  rig.lp.frequency.value = f.lpF;
+  rig.hp.frequency.value = f.hpF;
+}
+
+// ---------- song-kaede (arrangements-trin) ----------
+// et trin: {p: patternIdx, reps: antal gennemloeb, mutes: [8×bool]|null,
+//           mf: masterfilter-vaerdi ved trinnets SLUT (null = ingen automation),
+//           riser: bool, boom: bool, fillLast: bool}
+export function songEntry(e) {
+  return typeof e === 'number' ? { p: e, reps: 1, mutes: null } : e;
+}
+// filter-automation: breakpoints ved trin-slut, lineaer interpolation imellem
+export function buildFilterAuto(st) {
+  const pts = [];
+  let acc = 0;
+  for (const raw of st.song) {
+    const e = songEntry(raw);
+    acc += st.patterns[e.p].len * (e.reps || 1);
+    if (e.mf !== undefined && e.mf !== null) pts.push({ atStep: acc, v: e.mf });
+  }
+  return { pts, total: acc };
+}
+export function filterAutoAt(auto, initV, s) {
+  const { pts } = auto;
+  if (!pts.length) return null;
+  let prevStep = 0, prevV = initV;
+  for (const p of pts) {
+    if (s <= p.atStep) {
+      const span = p.atStep - prevStep;
+      return span <= 0 ? p.v : prevV + (p.v - prevV) * ((s - prevStep) / span);
+    }
+    prevStep = p.atStep; prevV = p.v;
+  }
+  return pts[pts.length - 1].v;
+}
+
+// ---------- build-vaerktoejer: riser + boom ----------
+export function schedRiser(rig, t, dur) {
+  const ctx = rig.ctx;
+  const src = ctx.createBufferSource();
+  src.buffer = noiseBuf(ctx); src.loop = true;
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.6;
+  bp.frequency.setValueAtTime(180, t);
+  bp.frequency.exponentialRampToValueAtTime(7500, t + dur);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.5, t + dur);   // eksponentiel = foeles lineaer
+  g.gain.setTargetAtTime(0.0001, t + dur, 0.02);       // klip praecis ved nedslaget
+  src.connect(bp); bp.connect(g); g.connect(rig.master);
+  const vs = ctx.createGain(); vs.gain.value = 0.3;
+  g.connect(vs); vs.connect(rig.vIn);
+  src.start(t); src.stop(t + dur + 0.4);
+}
+export function schedBoom(rig, t) {
+  const ctx = rig.ctx;
+  const o = ctx.createOscillator();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(120, t);
+  o.frequency.exponentialRampToValueAtTime(36, t + 0.35);
+  const og = ctx.createGain();
+  og.gain.setValueAtTime(0.9, t);
+  og.gain.exponentialRampToValueAtTime(0.0001, t + 1.4);
+  o.connect(og); og.connect(rig.master);
+  o.start(t); o.stop(t + 1.6);
+  const ns = ctx.createBufferSource(); ns.buffer = noiseBuf(ctx);
+  const nf = ctx.createBiquadFilter(); nf.type = 'lowpass'; nf.frequency.value = 2600;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0.5, t);
+  ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+  ns.connect(nf); nf.connect(ng); ng.connect(rig.master);
+  const vs = ctx.createGain(); vs.gain.value = 0.5;
+  ng.connect(vs); vs.connect(rig.vIn);
+  ns.start(t); ns.stop(t + 0.6);
+}
+// ved indgang til et song-trin: mute-maske + riser/boom
+export function enterEntry(rig, st, entry, t, entryDurSec) {
+  st.tracks.forEach((tr, i) => {
+    tr._emute = !!(entry.mutes && entry.mutes[i]);
+    rig.trackGains[i].gain.setTargetAtTime(trackGainVal(st, tr), Math.max(t, 0), 0.01);
+  });
+  if (entry.riser) schedRiser(rig, t, entryDurSec);
+  if (entry.boom) schedBoom(rig, t);
 }
 
 // ---------- kick-duck (sidechain-pump) ----------
@@ -359,9 +443,9 @@ export function trackLen(pattern, tr) {
   return (pattern.tlen && pattern.tlen[tr]) || pattern.len;
 }
 // planlaeg ét absolut step for alle spor (polymeter: hvert spor har sin egen laengde)
-export function schedStepAbs(rig, st, pattern, absStep, t, stepDur, lastFreqs) {
+export function schedStepAbs(rig, st, pattern, absStep, t, stepDur, lastFreqs, forceFill = false) {
   const loops = Math.floor(absStep / pattern.len);
-  const fill = !!st._fill;
+  const fill = !!st._fill || forceFill;
   const src = st.duckTrack ?? 0;
   for (let tr = 0; tr < st.tracks.length; tr++) {
     const idx = absStep % trackLen(pattern, tr);
@@ -394,51 +478,102 @@ export class Player {
     const ctx = this.ensureCtx();
     this.stop();
     const st = this.getState();
+    st.tracks.forEach(tr => { tr._emute = false; });
     this.rig = await buildRig(ctx, st);
     this.playing = true;
     this.absStep = 0;      // absolut 16.-dels-taeller i det aktuelle pattern
     this.songPtr = 0;      // position i song-kaeden
+    this.entryLoop = 0;    // gennemloeb inde i det aktuelle song-trin
+    this.songStep = 0;     // absolut step-taeller gennem hele sangen (til filter-automation)
+    this._entryKey = null;
     this._lastPatIdx = null;
+    this.mfAuto = buildFilterAuto(st);
+    this.mfInit = st.masterFilter ?? 0.5;
+    this.autoMF = null;
     this.lastFreqs = new Array(st.tracks.length).fill(null);
     this.nextTime = ctx.currentTime + 0.1;
     this.stepLog = [];
     this.timer = setInterval(() => this._tick(), 25);
     this._tick();
   }
-  _patIdx(st) {
-    if (st.mode === 'song' && st.song.length) return st.song[this.songPtr % st.song.length];
-    return st.curPattern;
-  }
   _tick() {
     const ctx = this.ctx;
     const st = this.getState();
     if (!this.rig) return;
     while (this.nextTime < ctx.currentTime + 0.14) {
-      const patIdx = this._patIdx(st);
+      const songMode = st.mode === 'song' && st.song.length > 0;
+      let entry = null, patIdx;
+      if (songMode) {
+        entry = songEntry(st.song[this.songPtr % st.song.length]);
+        patIdx = entry.p;
+      } else {
+        patIdx = st.curPattern;
+      }
       if (this._lastPatIdx !== null && patIdx !== this._lastPatIdx) {
         this.absStep = 0; // nyt pattern -> alle spor resynkes (Elektron-stil)
       }
       this._lastPatIdx = patIdx;
       const pat = st.patterns[patIdx];
       const stepDur = 60 / st.bpm / 4;
+      // song-trin-indgang: mute-maske, riser, boom
+      if (songMode && this._entryKey !== this.songPtr) {
+        this._entryKey = this.songPtr;
+        const dur = pat.len * (entry.reps || 1) * stepDur;
+        enterEntry(this.rig, st, entry, this.nextTime, dur);
+      }
+      if (!songMode && this._entryKey !== null) {
+        this._entryKey = null;
+        st.tracks.forEach((tr, i) => {
+          tr._emute = false;
+          this.rig.trackGains[i].gain.setTargetAtTime(trackGainVal(st, tr), this.nextTime, 0.01);
+        });
+      }
+      // master-filter-automation over sangen
+      if (songMode && this.mfAuto.pts.length) {
+        const v = filterAutoAt(this.mfAuto, this.mfInit, this.songStep + 1);
+        const f = mfFreqs(v);
+        this.rig.lp.frequency.setTargetAtTime(f.lpF, this.nextTime, 0.05);
+        this.rig.hp.frequency.setTargetAtTime(f.hpF, this.nextTime, 0.05);
+        this.autoMF = v;
+      }
+      // autofill: sidste gennemloeb af et trin med fillLast
+      const fillAuto = songMode && !!entry.fillLast && this.entryLoop === (entry.reps || 1) - 1;
       // swing paa de ulige 16.-dele
       const swingOff = (this.absStep % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
-      schedStepAbs(this.rig, st, pat, this.absStep, this.nextTime + swingOff, stepDur, this.lastFreqs);
-      this.stepLog.push({ t: this.nextTime, step: this.absStep % pat.len, abs: this.absStep, pattern: patIdx });
+      schedStepAbs(this.rig, st, pat, this.absStep, this.nextTime + swingOff, stepDur, this.lastFreqs, fillAuto);
+      this.stepLog.push({ t: this.nextTime, step: this.absStep % pat.len, abs: this.absStep, pattern: patIdx,
+        songIdx: songMode ? this.songPtr % st.song.length : null });
       if (this.stepLog.length > 80) this.stepLog.shift();
       this.nextTime += stepDur;
       this.absStep++;
-      if (this.absStep % pat.len === 0 && st.mode === 'song' && st.song.length) {
-        this.songPtr++;
-        if (this.songPtr >= st.song.length && !st.songLoop) { this.stopAt = this.nextTime; }
+      if (songMode) this.songStep++;
+      if (this.absStep % pat.len === 0) {
+        // koeet pattern-skift anvendes ved pattern-graensen (kvantiseret, playhead bevares)
+        if (!songMode && st._queuedPattern != null) {
+          st.curPattern = st._queuedPattern;
+          st._queuedPattern = null;
+        }
+        if (songMode) {
+          this.entryLoop++;
+          if (this.entryLoop >= (entry.reps || 1)) {
+            this.entryLoop = 0;
+            this.songPtr++;
+            if (this.songPtr >= st.song.length) {
+              if (!st.songLoop) { this.stopAt = this.nextTime; }
+              else { this.songPtr = 0; this.songStep = 0; this._entryKey = null; }
+            }
+          }
+        }
       }
       if (this.stopAt && this.nextTime >= this.stopAt) break;
     }
     if (this.stopAt && ctx.currentTime >= this.stopAt) this.stop();
-    // live-opdatering af delay-tid og master-filter
+    // live-opdatering af delay-tid og master-filter (automationen vinder i song-mode)
     this.rig.delay.delayTime.value = delayTimeSec(st);
     this.rig.fb.gain.value = st.delayFb ?? 0.4;
-    setMasterFilter(this.rig, st.masterFilter ?? 0.5);
+    if (!(st.mode === 'song' && this.mfAuto && this.mfAuto.pts.length)) {
+      setMasterFilter(this.rig, st.masterFilter ?? 0.5);
+    }
     this.rig.master.gain.value = st.masterVol ?? 0.9;
   }
   refreshTrackGains() {
@@ -462,6 +597,7 @@ export class Player {
   stop() {
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
     this.stopAt = null;
+    this.autoMF = null;
     if (this.rig && this.ctx) {
       const m = this.rig.master;
       m.gain.setTargetAtTime(0.0001, this.ctx.currentTime, 0.03);
@@ -490,29 +626,44 @@ export class Player {
 export async function renderWav(st, what = 'song') {
   const sr = 44100;
   const stepDur = 60 / st.bpm / 4;
-  let chain;
-  if (what === 'song' && st.song.length) chain = st.song.slice();
-  else chain = [st.curPattern, st.curPattern]; // pattern to gange
+  let entries;
+  if (what === 'song' && st.song.length) entries = st.song.map(songEntry);
+  else entries = [{ p: st.curPattern, reps: 2, mutes: null }]; // pattern to gange
   let totalSteps = 0;
-  for (const pi of chain) totalSteps += st.patterns[pi].len;
+  for (const e of entries) totalSteps += st.patterns[e.p].len * (e.reps || 1);
   const total = totalSteps * stepDur + 3;
   const ctx = new OfflineAudioContext(2, Math.ceil(total * sr), sr);
+  st.tracks.forEach(tr => { tr._emute = false; });
   const stR = { ...st, _fill: false };
   const rig = await buildRig(ctx, stR);
+  const auto = (what === 'song') ? buildFilterAuto(stR) : { pts: [], total: 0 };
+  const initV = st.masterFilter ?? 0.5;
   const lastFreqs = new Array(st.tracks.length).fill(null);
-  let t = 0.05, absStep = 0, lastPat = null;
-  for (const pi of chain) {
-    if (lastPat !== null && pi !== lastPat) absStep = 0;
-    lastPat = pi;
-    const pat = st.patterns[pi];
-    for (let s = 0; s < pat.len; s++) {
-      const swingOff = (absStep % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
-      schedStepAbs(rig, stR, pat, absStep, t + swingOff, stepDur, lastFreqs);
-      t += stepDur;
-      absStep++;
+  let t = 0.05, absStep = 0, lastPat = null, songStep = 0;
+  for (const e of entries) {
+    const pat = st.patterns[e.p];
+    if (lastPat !== null && e.p !== lastPat) absStep = 0;
+    lastPat = e.p;
+    const reps = e.reps || 1;
+    enterEntry(rig, stR, e, t, pat.len * reps * stepDur);
+    for (let rep = 0; rep < reps; rep++) {
+      const fillAuto = !!e.fillLast && rep === reps - 1;
+      for (let s = 0; s < pat.len; s++) {
+        if (auto.pts.length) {
+          const f = mfFreqs(filterAutoAt(auto, initV, songStep + 1));
+          rig.lp.frequency.setTargetAtTime(f.lpF, t, 0.05);
+          rig.hp.frequency.setTargetAtTime(f.hpF, t, 0.05);
+        }
+        const swingOff = (absStep % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
+        schedStepAbs(rig, stR, pat, absStep, t + swingOff, stepDur, lastFreqs, fillAuto);
+        t += stepDur;
+        absStep++;
+        songStep++;
+      }
     }
   }
   const buf = await ctx.startRendering();
+  st.tracks.forEach(tr => { tr._emute = false; });
   return encodeWav(buf);
 }
 export function encodeWav(buf) {
