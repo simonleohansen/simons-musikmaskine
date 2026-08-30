@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simons Musikmaskine</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%230b0b0d'/><text x='50' y='72' font-size='58' text-anchor='middle' fill='%23c8ff2e' font-family='monospace' font-weight='bold'>S</text></svg>">
+</head>
+<body>
+
+<header id="top">
+  <div id="logo">SIMONS<span>MUSIKMASKINE</span></div>
+  <button id="playBtn" title="Play/Stop (mellemrum)">►</button>
+  <div class="tgroup">
+    <label>BPM <input type="number" id="bpm" min="60" max="200" value="132"></label>
+    <label>SWING <input type="range" id="swing" min="0" max="0.6" step="0.01" value="0.12"><span id="swingVal">12%</span></label>
+  </div>
+  <div class="tgroup" id="masterGroup">
+    <label class="wide">MASTER FLT <input type="range" id="mFilter" min="0" max="1" step="0.005" value="0.5"><span id="mFilterVal">—</span></label>
+    <label>VOL <input type="range" id="mVol" min="0" max="1" step="0.01" value="0.9"></label>
+  </div>
+  <input id="projName" placeholder="uden titel" maxlength="40" spellcheck="false">
+  <button id="saveProj" title="Gem projekt i biblioteket">GEM</button>
+  <button id="projMenu" title="Åbn projekt">ÅBN ▾</button>
+  <button id="exportBtn" title="Eksportér som WAV">EKSPORT</button>
+</header>
+
+<div id="patternBar">
+  <div id="patternChips"></div>
+  <button id="patLen" title="Pattern-længde">16</button>
+  <button id="patCopy" title="Kopiér pattern">COPY</button>
+  <button id="patPaste" title="Sæt ind i pattern">PASTE</button>
+  <button id="patClear" title="Ryd pattern">CLR</button>
+  <div id="modeBox">
+    <button id="modePattern" class="on">PATTERN</button>
+    <button id="modeSong">SONG</button>
+  </div>
+  <div id="songRow">
+    <div id="songChain"></div>
+    <button id="songAdd" title="Tilføj det aktuelle pattern til sangen">+ TILFØJ</button>
+    <button id="songLoopBtn" class="on" title="Loop sangen">∞</button>
+  </div>
+</div>
+
+<main id="seq"></main>
+
+<footer id="soundPanel">
+  <div id="spHead">
+    <span id="spTrack">—</span>
+    <span id="lockBadge" hidden>LOCK · STEP <b id="lockStep"></b> <button id="lockClear">RYD LOCK</button> <button id="lockExit">✕</button></span>
+    <div id="presetRow"></div>
+    <button id="audition" title="Hør lyden">▷ HØR</button>
+  </div>
+  <div id="params"></div>
+</footer>
+
+<div id="toast" hidden></div>
+<div id="projList" hidden><div id="projBox"><div id="projHead">PROJEKTER <button id="projClose">✕</button></div><div id="projItems"></div></div></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
