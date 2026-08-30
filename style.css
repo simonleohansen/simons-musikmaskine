@@ -37,6 +37,7 @@ input[type="number"], input[type="text"], #projName {
 /* ---------- top ---------- */
 #top {
   display: flex; align-items: center; gap: 14px;
+  flex-wrap: wrap; row-gap: 5px;
   padding: 8px 14px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
@@ -51,6 +52,10 @@ input[type="number"], input[type="text"], #projName {
   background: #131608;
 }
 #playBtn.playing { color: var(--hot); border-color: var(--hot); background: #1c0a0d; }
+#fillBtn { height: 34px; font-weight: 800; color: var(--dim); }
+#fillBtn.on { color: #fff; background: var(--hot); border-color: var(--hot); }
+#pump { width: 60px; accent-color: var(--hot); }
+#pumpVal { color: var(--text); font-size: 10px; min-width: 28px; }
 .tgroup { display: flex; align-items: center; gap: 12px; }
 .tgroup label { display: flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 700; color: var(--dim); letter-spacing: 0.08em; white-space: nowrap; }
 #bpm { width: 56px; font-size: 14px; font-weight: 700; color: var(--acid); text-align: center; }
@@ -134,7 +139,20 @@ input[type="number"], input[type="text"], #projName {
 .stp.q { background: #202027; }             /* hver 4. */
 .stp:hover { border-color: var(--line2); }
 .stp.on { background: var(--trkcol, var(--acid)); border-color: transparent; }
-.stp.on.soft { opacity: 0.5; }
+/* ratchet-striber (2/3/4 slag i steppet) */
+.stp.on.r2 { background-image: linear-gradient(90deg, transparent 0 46%, #000a 46% 54%, transparent 54%); }
+.stp.on.r3 { background-image: linear-gradient(90deg, transparent 0 29%, #000a 29% 37%, transparent 37% 62%, #000a 62% 70%, transparent 70%); }
+.stp.on.r4 { background-image: linear-gradient(90deg, transparent 0 21%, #000a 21% 28%, transparent 28% 46%, #000a 46% 53%, transparent 53% 71%, #000a 71% 78%, transparent 78%); }
+.stp .pTag {
+  position: absolute; left: 2px; top: 1px;
+  font-size: 9px; font-weight: 800; color: #0b0b0d;
+  pointer-events: none;
+}
+.stp .condTag {
+  position: absolute; right: 2px; bottom: 1px;
+  font-size: 7px; font-weight: 800; color: #0b0b0d; opacity: 0.85;
+  pointer-events: none;
+}
 .stp.on .lockdot {
   position: absolute; top: 2px; right: 2px;
   width: 5px; height: 5px; border-radius: 50%;
@@ -178,14 +196,17 @@ input[type="number"], input[type="text"], #projName {
 #params {
   flex: 1;
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 6px 16px;
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 6px 14px;
   align-content: start;
   min-height: 0;
   overflow-y: auto;
 }
 .pgroup { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .pgTitle { font-size: 9px; font-weight: 800; letter-spacing: 0.14em; color: var(--dim); border-bottom: 1px solid var(--line); padding-bottom: 2px; }
+.pgroup.step .pgTitle { color: var(--amber); border-color: var(--amber); }
+.pgroup.step input[type="range"] { accent-color: var(--amber); }
+.pgroup.step .ldstRow button.on { color: var(--amber); border-color: var(--amber); }
 .prow { display: flex; align-items: center; gap: 6px; }
 .prow .plabel { flex: 0 0 40px; font-size: 9px; font-weight: 700; color: var(--dim); letter-spacing: 0.05em; }
 .prow input[type="range"] { flex: 1; min-width: 30px; height: 12px; }
@@ -222,3 +243,33 @@ input[type="number"], input[type="text"], #projName {
 .projItem { display: flex; align-items: center; gap: 8px; }
 .projItem button.open { flex: 1; text-align: left; padding: 8px 10px; }
 .projItem button.del { color: var(--hot); border-color: #402028; }
+
+/* ---------- spor-laengde + spor-menu + euclid ---------- */
+#tlenBox {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 10px; font-weight: 700; color: var(--dim); letter-spacing: 0.06em;
+}
+#tlenBox b { font-size: 12px; color: var(--text); min-width: 18px; text-align: center; }
+#tlenBox.custom b { color: var(--amber); }
+#tlenBox button { width: 20px; height: 20px; padding: 0; font-size: 11px; }
+.tlenHint { font-size: 9px; font-weight: 800; color: var(--amber); }
+#ctxMenu {
+  position: fixed; z-index: 200;
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--panel); border: 1px solid var(--line2); border-radius: 6px;
+  padding: 5px; box-shadow: 0 8px 30px #000c;
+}
+#ctxMenu button { text-align: left; border: none; background: transparent; padding: 6px 10px; font-size: 11px; }
+#ctxMenu button:hover { background: var(--panel2); color: var(--acid); }
+#eucPop {
+  position: fixed; z-index: 200;
+  display: flex; flex-direction: column; gap: 7px;
+  background: var(--panel); border: 1px solid var(--acid); border-radius: 6px;
+  padding: 10px 12px; box-shadow: 0 8px 30px #000c;
+  width: 220px;
+}
+.eucTitle { font-size: 10px; font-weight: 900; letter-spacing: 0.1em; color: var(--acid); }
+#eucPop label { display: flex; align-items: center; gap: 6px; font-size: 9px; font-weight: 700; color: var(--dim); }
+#eucPop input[type="range"] { flex: 1; }
+#eucPop b { min-width: 16px; text-align: right; color: var(--text); font-size: 11px; }
+.eucBtns { display: flex; gap: 6px; justify-content: flex-end; }

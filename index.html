@@ -12,9 +12,11 @@
 <header id="top">
   <div id="logo">SIMONS<span>MUSIKMASKINE</span></div>
   <button id="playBtn" title="Play/Stop (mellemrum)">►</button>
+  <button id="fillBtn" title="Hold nede for FILL (eller hold F-tasten)">FILL</button>
   <div class="tgroup">
     <label>BPM <input type="number" id="bpm" min="60" max="200" value="132"></label>
     <label>SWING <input type="range" id="swing" min="0" max="0.6" step="0.01" value="0.12"><span id="swingVal">12%</span></label>
+    <label>PUMP <input type="range" id="pump" min="0" max="1" step="0.01" value="0.4"><span id="pumpVal">40%</span></label>
   </div>
   <div class="tgroup" id="masterGroup">
     <label class="wide">MASTER FLT <input type="range" id="mFilter" min="0" max="1" step="0.005" value="0.5"><span id="mFilterVal">—</span></label>
@@ -48,6 +50,7 @@
 <footer id="soundPanel">
   <div id="spHead">
     <span id="spTrack">—</span>
+    <span id="tlenBox" title="Sporets længde i steps (polymeter)">LÆN <button id="tlenDec">−</button><b id="tlenVal">16</b><button id="tlenInc">+</button></span>
     <span id="lockBadge" hidden>LOCK · STEP <b id="lockStep"></b> <button id="lockClear">RYD LOCK</button> <button id="lockExit">✕</button></span>
     <div id="presetRow"></div>
     <button id="audition" title="Hør lyden">▷ HØR</button>
