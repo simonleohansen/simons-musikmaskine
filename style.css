@@ -169,6 +169,7 @@ input[type="number"], input[type="text"], #projName {
 .arrRow.arrAuto { flex: 0 0 46px; }
 .arrLabel {
   flex: 0 0 116px;
+  width: 116px; min-width: 0; max-width: 116px; /* laast som spor-hovederne */
   display: flex; align-items: center; gap: 5px;
   font-size: 10px; font-weight: 800; letter-spacing: 0.05em; color: var(--dim);
   overflow: hidden; white-space: nowrap;
@@ -261,6 +262,8 @@ input[type="number"], input[type="text"], #projName {
 .trk { display: flex; align-items: stretch; gap: 6px; flex: 1; min-height: 30px; }
 .trkHead {
   flex: 0 0 168px;
+  width: 168px; min-width: 0; max-width: 168px; /* laast: lange navne maa ikke goere boksen bredere */
+  overflow: hidden;
   display: flex; align-items: center; gap: 6px;
   background: var(--panel);
   border: 1px solid var(--line);
