@@ -219,6 +219,8 @@ input[type="number"], input[type="text"], #projName {
   background: linear-gradient(90deg, transparent 0 45%, var(--line2) 45% 55%, transparent 55%);
 }
 .arrEnt:hover .grip { background: linear-gradient(90deg, transparent 0 45%, var(--acid) 45% 55%, transparent 55%); }
+.arrEnt.empty b { color: var(--dim); }
+.arrEnt.empty .sub { color: var(--hot); }
 .arrEnt.dragging { opacity: 0.5; }
 .arrEnt.dropL { box-shadow: -3px 0 0 var(--acid); }
 .arrEnt.dropR { box-shadow: 3px 0 0 var(--acid); }

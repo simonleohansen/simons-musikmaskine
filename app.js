@@ -885,7 +885,9 @@ function renderArr() {
     b.style.setProperty('--pc', PAT_COLORS[e.p]);
     b.dataset.i = i;
     const marks = entMarks(e);
-    const subTxt = () => `${e.name ? PATTERN_NAMES[e.p] : ''}${(e.reps || 1) > 1 ? '×' + e.reps : ''}${marks.length ? ' ' + marks.join('·') : ''}`;
+    const patEmpty = !patternHasData(st.patterns[e.p]);
+    if (patEmpty) b.classList.add('empty');
+    const subTxt = () => `${e.name ? PATTERN_NAMES[e.p] : ''}${(e.reps || 1) > 1 ? '×' + e.reps : ''}${marks.length ? ' ' + marks.join('·') : ''}${patEmpty ? ' ⚠ PATTERN ' + PATTERN_NAMES[e.p] + ' ER TOMT' : ''}`;
     b.innerHTML = `<b>${e.name || PATTERN_NAMES[e.p]}</b><span class="sub">${subTxt()}</span><span class="grip"></span>`;
     b.title = 'Klik: redigér · træk: flyt · træk i kanten: gentagelser · højreklik: menu';
     b.onpointerdown = ev => {
