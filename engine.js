@@ -147,9 +147,9 @@ export function trackGainVal(st, tr) {
   const audible = anySolo ? tr.solo : !(tr.mute || tr._emute); // _emute = song-trins mute-maske
   return audible ? tr.level : 0;
 }
-export function delayTimeSec(st) {
+export function delayTimeSec(st, bpm = null) {
   // punkteret 8.-del som standard; st.delayDiv i 16.-dele (3 = punkteret 8.)
-  return (60 / st.bpm / 4) * (st.delayDiv ?? 3);
+  return (60 / (bpm || st.bpm) / 4) * (st.delayDiv ?? 3);
 }
 export function mfFreqs(v) {
   let lpF = 18000, hpF = 22;
@@ -164,24 +164,39 @@ export function setMasterFilter(rig, v) {
 }
 
 // ---------- song-kaede (arrangements-trin) ----------
-// et trin: {p: patternIdx, reps: antal gennemloeb, mutes: [8×bool]|null,
-//           mf: masterfilter-vaerdi ved trinnets SLUT (null = ingen automation),
+// et trin: {p: patternIdx, reps: antal gennemloeb, mutes: [8×bool]|null, name,
+//           bpm: tempo-override for trinnet (null = sangens BPM),
+//           mf/vol/pump: automations-vaerdier ved trinnets SLUT (null = ingen breakpoint),
 //           riser: bool, boom: bool, fillLast: bool}
 export function songEntry(e) {
   return typeof e === 'number' ? { p: e, reps: 1, mutes: null } : e;
 }
-// filter-automation: breakpoints ved trin-slut, lineaer interpolation imellem
-export function buildFilterAuto(st) {
+export function entrySteps(st, e) { return st.patterns[e.p].len * (e.reps || 1); }
+export function entryStartSteps(st, idx) {
+  let a = 0;
+  for (let i = 0; i < Math.min(idx, st.song.length); i++) a += entrySteps(st, songEntry(st.song[i]));
+  return a;
+}
+export function songDurationSec(st) {
+  let sec = 0;
+  for (const raw of st.song) {
+    const e = songEntry(raw);
+    sec += entrySteps(st, e) * (60 / (e.bpm || st.bpm) / 4);
+  }
+  return sec;
+}
+// automation: breakpoints ved trin-slut, lineaer interpolation imellem (mf/vol/pump)
+export function buildAuto(st, key) {
   const pts = [];
   let acc = 0;
   for (const raw of st.song) {
     const e = songEntry(raw);
-    acc += st.patterns[e.p].len * (e.reps || 1);
-    if (e.mf !== undefined && e.mf !== null) pts.push({ atStep: acc, v: e.mf });
+    acc += entrySteps(st, e);
+    if (e[key] !== undefined && e[key] !== null) pts.push({ atStep: acc, v: e[key] });
   }
   return { pts, total: acc };
 }
-export function filterAutoAt(auto, initV, s) {
+export function autoAt(auto, initV, s) {
   const { pts } = auto;
   if (!pts.length) return null;
   let prevStep = 0, prevV = initV;
@@ -254,12 +269,13 @@ function duckOne(g, depth, t, rel) {
 export function schedDuck(rig, st, t) {
   const rel = Math.max(0.05, (60 / st.bpm) * 0.55);
   const src = st.duckTrack ?? 0;
+  const pump = st._pumpAuto ?? st.pumpFx ?? 0; // _pumpAuto = song-automationens vaerdi
   st.tracks.forEach((tr, i) => {
     if (i === src) return;
     duckOne(rig.duckGains[i].gain, tr.patch.duck ?? 0, t, rel);
   });
-  duckOne(rig.duckD.gain, st.pumpFx ?? 0, t, rel);
-  duckOne(rig.duckV.gain, st.pumpFx ?? 0, t, rel);
+  duckOne(rig.duckD.gain, pump, t, rel);
+  duckOne(rig.duckV.gain, pump, t, rel);
 }
 
 // ---------- selve stemmen ----------
@@ -474,27 +490,37 @@ export class Player {
     if (this.ctx.state === 'suspended') this.ctx.resume();
     return this.ctx;
   }
-  async play() {
+  async play(startEntry = 0) {
     const ctx = this.ensureCtx();
     this.stop();
     const st = this.getState();
     st.tracks.forEach(tr => { tr._emute = false; });
+    st._pumpAuto = null;
     this.rig = await buildRig(ctx, st);
     this.playing = true;
     this.absStep = 0;      // absolut 16.-dels-taeller i det aktuelle pattern
-    this.songPtr = 0;      // position i song-kaeden
+    const se = Math.max(0, Math.min(startEntry, Math.max(0, st.song.length - 1)));
+    this.songPtr = se;     // position i song-kaeden
     this.entryLoop = 0;    // gennemloeb inde i det aktuelle song-trin
-    this.songStep = 0;     // absolut step-taeller gennem hele sangen (til filter-automation)
+    this.songStep = entryStartSteps(st, se); // absolut step-taeller gennem sangen (automation)
     this._entryKey = null;
     this._lastPatIdx = null;
-    this.mfAuto = buildFilterAuto(st);
-    this.mfInit = st.masterFilter ?? 0.5;
+    this.autos = { mf: buildAuto(st, 'mf'), vol: buildAuto(st, 'vol'), pump: buildAuto(st, 'pump') };
+    this.inits = { mf: st.masterFilter ?? 0.5, vol: st.masterVol ?? 0.9, pump: st.pumpFx ?? 0 };
     this.autoMF = null;
+    this.autoVol = null;
+    this.curBpm = st.bpm;
     this.lastFreqs = new Array(st.tracks.length).fill(null);
     this.nextTime = ctx.currentTime + 0.1;
     this.stepLog = [];
     this.timer = setInterval(() => this._tick(), 25);
     this._tick();
+  }
+  // hop til et song-trin: koeet ved naeste pattern-graense under afspilning
+  jumpTo(entryIdx) {
+    const st = this.getState();
+    if (!this.playing) return;
+    st._jumpEntry = entryIdx;
   }
   _tick() {
     const ctx = this.ctx;
@@ -514,7 +540,9 @@ export class Player {
       }
       this._lastPatIdx = patIdx;
       const pat = st.patterns[patIdx];
-      const stepDur = 60 / st.bpm / 4;
+      const effBpm = (songMode && entry.bpm) ? entry.bpm : st.bpm;
+      this.curBpm = effBpm;
+      const stepDur = 60 / effBpm / 4;
       // song-trin-indgang: mute-maske, riser, boom
       if (songMode && this._entryKey !== this.songPtr) {
         this._entryKey = this.songPtr;
@@ -528,13 +556,22 @@ export class Player {
           this.rig.trackGains[i].gain.setTargetAtTime(trackGainVal(st, tr), this.nextTime, 0.01);
         });
       }
-      // master-filter-automation over sangen
-      if (songMode && this.mfAuto.pts.length) {
-        const v = filterAutoAt(this.mfAuto, this.mfInit, this.songStep + 1);
-        const f = mfFreqs(v);
-        this.rig.lp.frequency.setTargetAtTime(f.lpF, this.nextTime, 0.05);
-        this.rig.hp.frequency.setTargetAtTime(f.hpF, this.nextTime, 0.05);
-        this.autoMF = v;
+      // song-automation: master-filter, master-volumen og pump
+      if (songMode) {
+        if (this.autos.mf.pts.length) {
+          const v = autoAt(this.autos.mf, this.inits.mf, this.songStep + 1);
+          const f = mfFreqs(v);
+          this.rig.lp.frequency.setTargetAtTime(f.lpF, this.nextTime, 0.05);
+          this.rig.hp.frequency.setTargetAtTime(f.hpF, this.nextTime, 0.05);
+          this.autoMF = v;
+        }
+        if (this.autos.vol.pts.length) {
+          const v = autoAt(this.autos.vol, this.inits.vol, this.songStep + 1);
+          this.rig.master.gain.setTargetAtTime(v, this.nextTime, 0.05);
+          this.autoVol = v;
+        }
+        st._pumpAuto = this.autos.pump.pts.length
+          ? autoAt(this.autos.pump, this.inits.pump, this.songStep + 1) : null;
       }
       // autofill: sidste gennemloeb af et trin med fillLast
       const fillAuto = songMode && !!entry.fillLast && this.entryLoop === (entry.reps || 1) - 1;
@@ -555,13 +592,31 @@ export class Player {
           st._queuedPattern = null;
         }
         if (songMode) {
-          this.entryLoop++;
-          if (this.entryLoop >= (entry.reps || 1)) {
+          if (st._jumpEntry != null) {
+            // koeet hop (klik paa linjalen under afspilning)
+            this.songPtr = Math.max(0, Math.min(st._jumpEntry, st.song.length - 1));
+            st._jumpEntry = null;
             this.entryLoop = 0;
-            this.songPtr++;
-            if (this.songPtr >= st.song.length) {
-              if (!st.songLoop) { this.stopAt = this.nextTime; }
-              else { this.songPtr = 0; this.songStep = 0; this._entryKey = null; }
+            this.songStep = entryStartSteps(st, this.songPtr);
+            this._entryKey = null;
+          } else {
+            this.entryLoop++;
+            if (this.entryLoop >= (entry.reps || 1)) {
+              this.entryLoop = 0;
+              const loopSet = st.loopA != null && st.loopB != null && st.loopA <= st.loopB
+                && st.loopB < st.song.length;
+              if (loopSet && this.songPtr === st.loopB) {
+                // loop-brace: tilbage til loop-start
+                this.songPtr = st.loopA;
+                this.songStep = entryStartSteps(st, st.loopA);
+                this._entryKey = null;
+              } else {
+                this.songPtr++;
+                if (this.songPtr >= st.song.length) {
+                  if (!st.songLoop) { this.stopAt = this.nextTime; }
+                  else { this.songPtr = 0; this.songStep = 0; this._entryKey = null; }
+                }
+              }
             }
           }
         }
@@ -569,13 +624,12 @@ export class Player {
       if (this.stopAt && this.nextTime >= this.stopAt) break;
     }
     if (this.stopAt && ctx.currentTime >= this.stopAt) this.stop();
-    // live-opdatering af delay-tid og master-filter (automationen vinder i song-mode)
-    this.rig.delay.delayTime.value = delayTimeSec(st);
+    // live-opdatering af delay-tid, master-filter og -volumen (automationen vinder i song-mode)
+    this.rig.delay.delayTime.value = delayTimeSec(st, this.curBpm);
     this.rig.fb.gain.value = st.delayFb ?? 0.4;
-    if (!(st.mode === 'song' && this.mfAuto && this.mfAuto.pts.length)) {
-      setMasterFilter(this.rig, st.masterFilter ?? 0.5);
-    }
-    this.rig.master.gain.value = st.masterVol ?? 0.9;
+    const songAuto = st.mode === 'song' && this.autos;
+    if (!(songAuto && this.autos.mf.pts.length)) setMasterFilter(this.rig, st.masterFilter ?? 0.5);
+    if (!(songAuto && this.autos.vol.pts.length)) this.rig.master.gain.value = st.masterVol ?? 0.9;
   }
   refreshTrackGains() {
     if (!this.playing || !this.rig) return;
@@ -588,7 +642,7 @@ export class Player {
     if (!this.playing || !this.ctx) return null;
     const now = this.ctx.currentTime;
     const st = this.getState();
-    const stepDur = 60 / st.bpm / 4;
+    const stepDur = 60 / (this.curBpm || st.bpm) / 4;
     for (let i = this.stepLog.length - 1; i >= 0; i--) {
       const e = this.stepLog[i];
       if (now >= e.t && now < e.t + stepDur) return e;
@@ -599,6 +653,7 @@ export class Player {
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
     this.stopAt = null;
     this.autoMF = null;
+    this.autoVol = null;
     if (this.rig && this.ctx) {
       const m = this.rig.master;
       m.gain.setTargetAtTime(0.0001, this.ctx.currentTime, 0.03);
@@ -626,19 +681,23 @@ export class Player {
 // ---------- offline eksport ----------
 export async function renderWav(st, what = 'song') {
   const sr = 44100;
-  const stepDur = 60 / st.bpm / 4;
+  const isSong = what === 'song' && st.song.length > 0;
   let entries;
-  if (what === 'song' && st.song.length) entries = st.song.map(songEntry);
+  if (isSong) entries = st.song.map(songEntry);
   else entries = [{ p: st.curPattern, reps: 2, mutes: null }]; // pattern to gange
-  let totalSteps = 0;
-  for (const e of entries) totalSteps += st.patterns[e.p].len * (e.reps || 1);
-  const total = totalSteps * stepDur + 3;
+  let totalSec = 0;
+  for (const e of entries) {
+    totalSec += st.patterns[e.p].len * (e.reps || 1) * (60 / ((isSong && e.bpm) || st.bpm) / 4);
+  }
+  const total = totalSec + 3;
   const ctx = new OfflineAudioContext(2, Math.ceil(total * sr), sr);
   st.tracks.forEach(tr => { tr._emute = false; });
-  const stR = { ...st, _fill: false };
+  const stR = { ...st, _fill: false, _pumpAuto: null };
   const rig = await buildRig(ctx, stR);
-  const auto = (what === 'song') ? buildFilterAuto(stR) : { pts: [], total: 0 };
-  const initV = st.masterFilter ?? 0.5;
+  const autos = isSong
+    ? { mf: buildAuto(stR, 'mf'), vol: buildAuto(stR, 'vol'), pump: buildAuto(stR, 'pump') }
+    : { mf: { pts: [] }, vol: { pts: [] }, pump: { pts: [] } };
+  const inits = { mf: st.masterFilter ?? 0.5, vol: st.masterVol ?? 0.9, pump: st.pumpFx ?? 0 };
   const lastFreqs = new Array(st.tracks.length).fill(null);
   let t = 0.05, absStep = 0, lastPat = null, songStep = 0;
   for (const e of entries) {
@@ -646,15 +705,20 @@ export async function renderWav(st, what = 'song') {
     if (lastPat !== null && e.p !== lastPat) absStep = 0;
     lastPat = e.p;
     const reps = e.reps || 1;
+    const stepDur = 60 / ((isSong && e.bpm) || st.bpm) / 4;
     enterEntry(rig, stR, e, t, pat.len * reps * stepDur);
     for (let rep = 0; rep < reps; rep++) {
       const fillAuto = !!e.fillLast && rep === reps - 1;
       for (let s = 0; s < pat.len; s++) {
-        if (auto.pts.length) {
-          const f = mfFreqs(filterAutoAt(auto, initV, songStep + 1));
+        if (autos.mf.pts.length) {
+          const f = mfFreqs(autoAt(autos.mf, inits.mf, songStep + 1));
           rig.lp.frequency.setTargetAtTime(f.lpF, t, 0.05);
           rig.hp.frequency.setTargetAtTime(f.hpF, t, 0.05);
         }
+        if (autos.vol.pts.length) {
+          rig.master.gain.setTargetAtTime(autoAt(autos.vol, inits.vol, songStep + 1), t, 0.05);
+        }
+        stR._pumpAuto = autos.pump.pts.length ? autoAt(autos.pump, inits.pump, songStep + 1) : null;
         const swingOff = (absStep % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
         schedStepAbs(rig, stR, pat, absStep, t + swingOff, stepDur, lastFreqs, fillAuto);
         t += stepDur;

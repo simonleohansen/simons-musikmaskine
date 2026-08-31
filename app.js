@@ -1,6 +1,6 @@
 // SIMONS MUSIKMASKINE — UI og tilstand (v2: duck/pump, osc2, ADSR, choke, crush,
 // probability, ratchets, conditions, polymeter, FILL, euclid/rotate-vaerktoejer)
-import { Player, renderWav, noteName, cutHz, songEntry } from './engine.js';
+import { Player, renderWav, noteName, cutHz, songEntry, songDurationSec } from './engine.js';
 
 const $ = id => document.getElementById(id);
 const PATTERN_NAMES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
@@ -573,12 +573,8 @@ function renderSong() {
     const e = songEntry(raw);
     const c = document.createElement('button');
     c.className = 'songChip';
-    const marks = [];
-    if (e.mutes && e.mutes.some(Boolean)) marks.push('M');
-    if (e.mf !== undefined && e.mf !== null) marks.push('FLT');
-    if (e.riser) marks.push('↗');
-    if (e.boom) marks.push('✸');
-    if (e.fillLast) marks.push('FILL');
+    const marks = entMarks(e);
+    if (e.mutes && e.mutes.some(Boolean)) marks.unshift('M');
     c.innerHTML = (e.name ? `<span class="nm">${e.name}</span>` : '')
       + `${PATTERN_NAMES[e.p]}${(e.reps || 1) > 1 ? `<span class="reps">×${e.reps}</span>` : ''}`
       + (marks.length ? `<span class="marks">${marks.join('·')}</span>` : '')
@@ -608,6 +604,7 @@ function openSongEntry(ev, idx) {
       <span style="margin-left:auto"><button id="entML" title="Flyt trin til venstre">◀</button><button id="entMR" title="Flyt trin til højre">▶</button></span></div>
     <label>NAVN <input id="entName" type="text" maxlength="14" placeholder="fx INTRO, DROP…" spellcheck="false"></label>
     <label>GENTAG <button id="entRD">−</button> <b id="entRV"></b> <button id="entRI">+</button>
+      <span style="margin-left:10px">BPM</span> <input id="entBpm" type="number" min="60" max="200" placeholder="arv" style="width:52px"> <button id="entBpmX">✕</button>
       <button id="entGoto" style="margin-left:auto">GÅ TIL PATTERN</button></label>
     <div class="entRow"><span class="plabel">SPOR</span><div class="muteDots">${dots}</div><button id="entMClr">ALLE MED</button></div>
     <div class="entRow"><span class="plabel">FLT SLUT</span>
@@ -643,6 +640,13 @@ function openSongEntry(ev, idx) {
     if (!e.name) delete e.name;
     persist(); renderSong();
   };
+  q('#entBpm').value = e.bpm || '';
+  q('#entBpm').oninput = () => {
+    const v = +q('#entBpm').value;
+    if (v >= 60 && v <= 200) e.bpm = v; else delete e.bpm;
+    persist(); renderSong();
+  };
+  q('#entBpmX').onclick = () => { delete e.bpm; q('#entBpm').value = ''; persist(); renderSong(); };
   const move = d => {
     const j = idx + d;
     if (j < 0 || j >= st.song.length) return;
@@ -704,6 +708,70 @@ function trackMarksURI(ti, pIdx, color) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${L} 12" preserveAspectRatio="none"><g fill="${color}">${rects}</g></svg>`;
   return { uri: `url("data:image/svg+xml,${encodeURIComponent(svg)}")`, L };
 }
+const PAT_COLORS = ['#c8ff2e', '#3db9ff', '#ff9f2e', '#ff5ad0', '#3dffc0', '#ffd83d', '#a06bff', '#ff3d5a'];
+let arrZoom = 1;
+let suppressEntClick = false;
+function fmtDur(sec) { return Math.floor(sec / 60) + ':' + String(Math.round(sec % 60)).padStart(2, '0'); }
+function entMarks(e) {
+  const m = [];
+  if (e.bpm) m.push('♩' + e.bpm);
+  if (e.mf !== undefined && e.mf !== null) m.push('FLT');
+  if (e.vol !== undefined && e.vol !== null) m.push('VOL');
+  if (e.pump !== undefined && e.pump !== null) m.push('PMP');
+  if (e.riser) m.push('↗');
+  if (e.boom) m.push('✸');
+  if (e.fillLast) m.push('FILL');
+  return m;
+}
+// spil herfra: saetter startmarkoer; hopper kvantiseret hvis der spilles
+function seekEntry(i) {
+  st._startEntry = i;
+  if (st.mode !== 'song') { st.mode = 'song'; persist(); }
+  if (player.playing) {
+    player.jumpTo(i);
+    toast('Hopper til trin ' + (i + 1) + ' ved næste pattern-grænse');
+  }
+  renderSong();
+}
+function entryMenu(ev, i) {
+  closeMenus();
+  const e = songEntry(st.song[i]);
+  const m = document.createElement('div');
+  m.id = 'ctxMenu';
+  const items = [
+    ['▶ SPIL HERFRA', () => seekEntry(i)],
+    ['⟳ LOOP DETTE TRIN', () => { st.loopA = i; st.loopB = i; persist(); renderSong(); }],
+  ];
+  if (st.loopA != null) {
+    items.push(['⟳ LOOP HERTIL', () => {
+      st.loopB = Math.max(st.loopA, i); st.loopA = Math.min(st.loopA, i);
+      persist(); renderSong();
+    }]);
+    items.push(['RYD LOOP', () => { delete st.loopA; delete st.loopB; persist(); renderSong(); }]);
+  }
+  if ((e.reps || 1) > 1) {
+    items.push(['✂ SPLIT', () => {
+      const a = Math.ceil(e.reps / 2), b = e.reps - a;
+      e.reps = a;
+      st.song.splice(i + 1, 0, { ...snapshot(e), reps: b });
+      persist(); renderSong();
+    }]);
+  }
+  items.push(['⧉ DUPLIKÉR', () => { st.song.splice(i + 1, 0, snapshot(e)); persist(); renderSong(); }]);
+  items.push(['+ INDSÆT TRIN EFTER', () => { st.song.splice(i + 1, 0, { p: st.curPattern, reps: 1, mutes: null }); persist(); renderSong(); }]);
+  items.push(['◌ INDSÆT PAUSE EFTER', () => { st.song.splice(i + 1, 0, { p: e.p, reps: 1, mutes: new Array(8).fill(true), name: 'PAUSE' }); persist(); renderSong(); }]);
+  items.push(['✕ SLET', () => { st.song.splice(i, 1); if (st.loopB >= st.song.length) { delete st.loopA; delete st.loopB; } persist(); renderSong(); }]);
+  for (const [label, fn] of items) {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.onclick = e2 => { e2.stopPropagation(); closeMenus(); fn(); };
+    m.appendChild(b);
+  }
+  m.style.left = Math.min(ev.clientX, innerWidth - 200) + 'px';
+  m.style.top = Math.min(ev.clientY, innerHeight - 280) + 'px';
+  document.body.appendChild(m);
+  ctxMenuEl = m;
+}
 function renderArr() {
   const el = $('arr');
   el.innerHTML = '';
@@ -713,40 +781,187 @@ function renderArr() {
   }
   const entries = st.song.map(songEntry);
   const total = songTotalSteps();
+  const wPct = e => (entSteps(e) / total * 100) + '%';
+  // vaerktoejslinje: info, loop, zoom
+  const tb = document.createElement('div');
+  tb.id = 'arrTb';
+  tb.innerHTML = `<span id="arrInfo">${entries.length} trin · ${Math.ceil(total / 16)} takter · ${fmtDur(songDurationSec(st))}</span>`
+    + (st.loopA != null ? `<span id="arrLoopInfo">⟳ LOOP ${st.loopA + 1}–${st.loopB + 1}</span><button id="arrLoopClr">RYD</button>` : '')
+    + `<span class="sp"></span><button id="arrZoomOut" title="Zoom ud">−</button><b id="arrZoomV">${Math.round(arrZoom * 100)}%</b><button id="arrZoomIn" title="Zoom ind">+</button>`;
+  el.appendChild(tb);
+  tb.querySelector('#arrZoomIn').onclick = () => { arrZoom = Math.min(8, arrZoom * 1.4); renderArr(); };
+  tb.querySelector('#arrZoomOut').onclick = () => { arrZoom = Math.max(1, arrZoom / 1.4); renderArr(); };
+  const lc = tb.querySelector('#arrLoopClr');
+  if (lc) lc.onclick = () => { delete st.loopA; delete st.loopB; persist(); renderSong(); };
+  // overview-strip: hele sangens form, klik = spil herfra
+  const mini = document.createElement('div');
+  mini.id = 'arrMini';
+  entries.forEach((e, i) => {
+    const seg = document.createElement('div');
+    const inLoop = st.loopA != null && i >= st.loopA && i <= st.loopB;
+    seg.className = 'miniSeg' + (inLoop ? ' inLoop' : '');
+    seg.style.width = wPct(e);
+    seg.style.background = PAT_COLORS[e.p];
+    seg.title = (e.name || PATTERN_NAMES[e.p]) + ' — klik: spil herfra';
+    seg.onclick = () => seekEntry(i);
+    mini.appendChild(seg);
+  });
+  const miniPh = document.createElement('div');
+  miniPh.id = 'arrMiniPh';
+  miniPh.hidden = true;
+  mini.appendChild(miniPh);
+  el.appendChild(mini);
+  // scroll-omraade + zoombar wrap
+  const scroller = document.createElement('div');
+  scroller.id = 'arrScroll';
   const wrap = document.createElement('div');
   wrap.id = 'arrWrap';
-  const wPct = e => (entSteps(e) / total * 100) + '%';
-  // takt-linjal + trin-hoveder
+  wrap.style.width = (arrZoom * 100) + '%';
+  // LINJAL: klik = spil herfra (kvantiseret) · traek = loop-omraade · dbl = ryd loop
+  const ruler = document.createElement('div');
+  ruler.className = 'arrRow arrRuler';
+  ruler.innerHTML = '<div class="arrLabel">TAKT</div>';
+  const rulerIn = document.createElement('div');
+  rulerIn.className = 'arrLanes';
+  let acc = 0;
+  entries.forEach((e, i) => {
+    const seg = document.createElement('div');
+    const inLoop = st.loopA != null && i >= st.loopA && i <= st.loopB;
+    seg.className = 'rulSeg' + (inLoop ? ' inLoop' : '');
+    seg.style.width = wPct(e);
+    seg.dataset.i = i;
+    const reps = e.reps || 1;
+    let ticks = '';
+    if (reps > 1 && reps <= 24) for (let r = 1; r < reps; r++) ticks += `<i style="left:${(r / reps * 100).toFixed(2)}%"></i>`;
+    seg.innerHTML = `<span>${Math.floor(acc / 16) + 1}</span>${st._startEntry === i ? '<b class="startFlag">▸</b>' : ''}${ticks}`;
+    rulerIn.appendChild(seg);
+    acc += entSteps(e);
+  });
+  let rulDrag = null;
+  const segAt = ev => document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.rulSeg');
+  rulerIn.onpointerdown = ev => {
+    const seg = ev.target.closest('.rulSeg');
+    if (!seg) return;
+    rulDrag = { a: +seg.dataset.i, b: +seg.dataset.i, moved: false };
+    try { rulerIn.setPointerCapture(ev.pointerId); } catch (e2) {}
+  };
+  rulerIn.onpointermove = ev => {
+    if (!rulDrag) return;
+    const seg = segAt(ev);
+    if (seg && +seg.dataset.i !== rulDrag.b) {
+      rulDrag.b = +seg.dataset.i;
+      rulDrag.moved = true;
+      const lo = Math.min(rulDrag.a, rulDrag.b), hi = Math.max(rulDrag.a, rulDrag.b);
+      rulerIn.querySelectorAll('.rulSeg').forEach((s2, j) => s2.classList.toggle('selRange', j >= lo && j <= hi));
+    }
+  };
+  rulerIn.onpointerup = () => {
+    if (!rulDrag) return;
+    const { a, b, moved } = rulDrag;
+    rulDrag = null;
+    if (moved && a !== b) {
+      st.loopA = Math.min(a, b);
+      st.loopB = Math.max(a, b);
+      persist(); renderSong();
+      toast('Loop sat: trin ' + (st.loopA + 1) + '–' + (st.loopB + 1));
+    } else {
+      seekEntry(a);
+    }
+  };
+  rulerIn.ondblclick = () => { delete st.loopA; delete st.loopB; persist(); renderSong(); };
+  ruler.appendChild(rulerIn);
+  wrap.appendChild(ruler);
+  // TRIN-HOVEDER: klik = editor · traek = flyt · traek i hoejre kant = aendr gentagelser · hoejreklik = menu
   const head = document.createElement('div');
   head.className = 'arrRow arrHead';
-  head.innerHTML = '<div class="arrLabel">TAKT</div>';
+  head.innerHTML = '<div class="arrLabel"></div>';
   const headIn = document.createElement('div');
   headIn.className = 'arrLanes';
-  let accSteps = 0;
+  let entDrag = null;
   entries.forEach((e, i) => {
     const b = document.createElement('button');
     b.className = 'arrEnt';
     b.style.width = wPct(e);
-    const marks = [];
-    if (e.mf !== undefined && e.mf !== null) marks.push('FLT');
-    if (e.riser) marks.push('↗');
-    if (e.boom) marks.push('✸');
-    if (e.fillLast) marks.push('FILL');
-    b.innerHTML = `<span class="bar">${Math.floor(accSteps / 16) + 1}</span>`
-      + `<b>${e.name || PATTERN_NAMES[e.p]}</b>`
-      + `<span class="sub">${e.name ? PATTERN_NAMES[e.p] : ''}${(e.reps || 1) > 1 ? '×' + e.reps : ''}${marks.length ? ' ' + marks.join('·') : ''}</span>`;
-    b.title = 'Klik: redigér trinnet';
-    b.onclick = ev => openSongEntry(ev, i);
+    b.style.setProperty('--pc', PAT_COLORS[e.p]);
+    b.dataset.i = i;
+    const marks = entMarks(e);
+    const subTxt = () => `${e.name ? PATTERN_NAMES[e.p] : ''}${(e.reps || 1) > 1 ? '×' + e.reps : ''}${marks.length ? ' ' + marks.join('·') : ''}`;
+    b.innerHTML = `<b>${e.name || PATTERN_NAMES[e.p]}</b><span class="sub">${subTxt()}</span><span class="grip"></span>`;
+    b.title = 'Klik: redigér · træk: flyt · træk i kanten: gentagelser · højreklik: menu';
+    b.onpointerdown = ev => {
+      if (ev.button !== 0) return;
+      const r = b.getBoundingClientRect();
+      entDrag = {
+        i, el: b, x0: ev.clientX, reps0: e.reps || 1,
+        loopPx: r.width / (e.reps || 1),
+        mode: (ev.clientX > r.right - 12) ? 'resize' : 'pending',
+        moved: false, target: null,
+      };
+      try { b.setPointerCapture(ev.pointerId); } catch (e2) {}
+    };
+    b.onpointermove = ev => {
+      if (!entDrag || entDrag.el !== b) return;
+      const dx = ev.clientX - entDrag.x0;
+      if (entDrag.mode === 'pending' && Math.abs(dx) > 8) { entDrag.mode = 'drag'; b.classList.add('dragging'); }
+      if (entDrag.mode === 'resize') {
+        const nr = Math.max(1, Math.min(64, Math.round(entDrag.reps0 + dx / entDrag.loopPx)));
+        if (nr !== (e.reps || 1)) {
+          e.reps = nr;
+          entDrag.moved = true;
+          b.style.width = (entDrag.loopPx * nr) + 'px';
+          b.querySelector('.sub').textContent = subTxt();
+        }
+      } else if (entDrag.mode === 'drag') {
+        entDrag.moved = true;
+        const seg = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.arrEnt');
+        headIn.querySelectorAll('.arrEnt').forEach(x => x.classList.remove('dropL', 'dropR'));
+        if (seg && seg !== b) {
+          const r2 = seg.getBoundingClientRect();
+          const before = ev.clientX < r2.left + r2.width / 2;
+          seg.classList.add(before ? 'dropL' : 'dropR');
+          entDrag.target = { i: +seg.dataset.i, before };
+        } else {
+          entDrag.target = null;
+        }
+      }
+    };
+    const endEnt = () => {
+      if (!entDrag || entDrag.el !== b) return;
+      const d = entDrag;
+      entDrag = null;
+      b.classList.remove('dragging');
+      if (d.mode === 'drag' && d.target) {
+        const item = st.song.splice(d.i, 1)[0];
+        let to = d.target.i + (d.target.before ? 0 : 1);
+        if (d.i < to) to--;
+        st.song.splice(to, 0, item);
+        suppressEntClick = true;
+        persist(); renderSong();
+        return;
+      }
+      if (d.moved) { suppressEntClick = true; persist(); renderSong(); }
+    };
+    b.onpointerup = endEnt;
+    b.onpointercancel = endEnt;
+    b.onclick = ev => {
+      if (suppressEntClick) { suppressEntClick = false; return; }
+      openSongEntry(ev, i);
+    };
+    b.oncontextmenu = ev => { ev.preventDefault(); entryMenu(ev, i); };
     headIn.appendChild(b);
-    accSteps += entSteps(e);
   });
   head.appendChild(headIn);
   wrap.appendChild(head);
-  // spor-baner: blok = sporet spiller i trinnet; klik maler mute
+  // spor-baner: blok = sporet spiller i trinnet; klik maler mute. Label = mini-mixer
   st.tracks.forEach((tr, ti) => {
     const row = document.createElement('div');
     row.className = 'arrRow';
-    row.innerHTML = `<div class="arrLabel"><span class="trkDot" style="background:${tr.color}"></span>${tr.name}</div>`;
+    const lab = document.createElement('div');
+    lab.className = 'arrLabel';
+    lab.innerHTML = `<span class="trkDot" style="background:${tr.color}"></span><span class="ln">${tr.name}</span>
+      <input class="arrLvl" type="range" min="0" max="1" step="0.01" value="${tr.level}" title="Niveau: ${tr.name}">`;
+    lab.querySelector('.arrLvl').oninput = ev => { tr.level = +ev.target.value; persist(); player.refreshTrackGains(); };
+    row.appendChild(lab);
     const lanes = document.createElement('div');
     lanes.className = 'arrLanes';
     entries.forEach((e, i) => {
@@ -775,70 +990,74 @@ function renderArr() {
     row.appendChild(lanes);
     wrap.appendChild(row);
   });
-  // filter-automationsbane (traek for at saette, dobbeltklik for at fjerne)
-  const autoRow = document.createElement('div');
-  autoRow.className = 'arrRow arrAuto';
-  autoRow.innerHTML = '<div class="arrLabel">MASTER FLT</div>';
-  const autoLane = document.createElement('div');
-  autoLane.className = 'arrLanes';
-  const svgNS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(svgNS, 'svg');
-  svg.setAttribute('id', 'arrAutoSvg');
-  svg.setAttribute('preserveAspectRatio', 'none');
-  svg.setAttribute('viewBox', '0 0 1000 100');
-  autoLane.appendChild(svg);
-  autoRow.appendChild(autoLane);
-  wrap.appendChild(autoRow);
-  const drawAuto = () => {
-    const pts = [[0, st.masterFilter ?? 0.5]];
-    let acc = 0;
-    for (const e of entries) {
-      acc += entSteps(e);
-      if (e.mf !== undefined && e.mf !== null) pts.push([acc / total, e.mf]);
-    }
-    pts.push([1, pts[pts.length - 1][1]]);
-    const path = pts.map(([x, v], i) => `${i ? 'L' : 'M'}${(x * 1000).toFixed(1)},${((1 - v) * 100).toFixed(1)}`).join(' ');
-    svg.innerHTML = `<line x1="0" y1="50" x2="1000" y2="50" class="mid"/>`
-      + `<path d="${path}" class="curve"/>`
-      + pts.slice(1, -1).map(([x, v]) =>
-        `<circle cx="${(x * 1000).toFixed(1)}" cy="${((1 - v) * 100).toFixed(1)}" r="6" class="pt"/>`).join('');
+  // automations-baner: traek for at saette breakpoint ved trin-slut, dobbeltklik fjerner
+  const makeAutoLane = (key, label, cls, initV) => {
+    const autoRow = document.createElement('div');
+    autoRow.className = 'arrRow arrAuto';
+    autoRow.innerHTML = `<div class="arrLabel">${label}</div>`;
+    const lane = document.createElement('div');
+    lane.className = 'arrLanes';
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'autoSvg ' + cls);
+    svg.setAttribute('preserveAspectRatio', 'none');
+    svg.setAttribute('viewBox', '0 0 1000 100');
+    lane.appendChild(svg);
+    autoRow.appendChild(lane);
+    wrap.appendChild(autoRow);
+    const draw = () => {
+      const pts = [[0, initV]];
+      let a2 = 0;
+      for (const e of entries) {
+        a2 += entSteps(e);
+        if (e[key] !== undefined && e[key] !== null) pts.push([a2 / total, e[key]]);
+      }
+      pts.push([1, pts[pts.length - 1][1]]);
+      const path = pts.map(([x, v], j) => `${j ? 'L' : 'M'}${(x * 1000).toFixed(1)},${((1 - v) * 100).toFixed(1)}`).join(' ');
+      svg.innerHTML = `<line x1="0" y1="50" x2="1000" y2="50" class="mid"/>`
+        + `<path d="${path}" class="curve"/>`
+        + pts.slice(1, -1).map(([x, v]) =>
+          `<circle cx="${(x * 1000).toFixed(1)}" cy="${((1 - v) * 100).toFixed(1)}" r="6" class="pt"/>`).join('');
+    };
+    const entryAtX = frac => {
+      let a2 = 0;
+      for (const e of entries) {
+        a2 += entSteps(e) / total;
+        if (frac <= a2) return e;
+      }
+      return entries[entries.length - 1];
+    };
+    let dragging = false;
+    const setFrom = ev => {
+      const r = svg.getBoundingClientRect();
+      if (!r.width) return;
+      const frac = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width));
+      const v = Math.max(0, Math.min(1, 1 - (ev.clientY - r.top) / r.height));
+      entryAtX(frac)[key] = Math.round(v * 100) / 100;
+      persist(); draw(); // fuld re-render foerst ved pointerup (ellers ryger pointer capture)
+    };
+    svg.onpointerdown = ev => { dragging = true; try { svg.setPointerCapture(ev.pointerId); } catch (e2) {} setFrom(ev); };
+    svg.onpointermove = ev => { if (dragging) setFrom(ev); };
+    svg.onpointerup = () => { dragging = false; renderSong(); };
+    svg.ondblclick = ev => {
+      const r = svg.getBoundingClientRect();
+      delete entryAtX(Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)))[key];
+      persist(); renderSong();
+    };
+    draw();
   };
-  const entryAtX = frac => {
-    let acc = 0;
-    for (let i = 0; i < entries.length; i++) {
-      acc += entSteps(entries[i]) / total;
-      if (frac <= acc) return entries[i];
-    }
-    return entries[entries.length - 1];
-  };
-  let autoDrag = false;
-  const setFromEvent = ev => {
-    const r = svg.getBoundingClientRect();
-    if (!r.width) return;
-    const frac = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width));
-    const v = Math.max(0, Math.min(1, 1 - (ev.clientY - r.top) / r.height));
-    entryAtX(frac).mf = Math.round(v * 100) / 100;
-    persist(); drawAuto(); // chips/arr gen-renderes foerst ved pointerup (ellers ryger pointer capture)
-  };
-  svg.onpointerdown = ev => { autoDrag = true; try { svg.setPointerCapture(ev.pointerId); } catch (e2) {} setFromEvent(ev); };
-  svg.onpointermove = ev => { if (autoDrag) setFromEvent(ev); };
-  svg.onpointerup = () => { autoDrag = false; renderSong(); };
-  svg.ondblclick = ev => {
-    const r = svg.getBoundingClientRect();
-    const e = entryAtX(Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)));
-    delete e.mf;
-    persist(); renderSong();
-  };
-  drawAuto();
+  makeAutoLane('mf', 'MASTER FLT', 'mf', st.masterFilter ?? 0.5);
+  makeAutoLane('vol', 'VOLUMEN', 'vol', st.masterVol ?? 0.9);
+  makeAutoLane('pump', 'PUMP', 'pump', st.pumpFx ?? 0);
   // playhead
   const ph = document.createElement('div');
   ph.id = 'arrPlayhead';
   ph.hidden = true;
   wrap.appendChild(ph);
-  el.appendChild(wrap);
+  scroller.appendChild(wrap);
+  el.appendChild(scroller);
   const hint = document.createElement('div');
   hint.id = 'arrHint';
-  hint.textContent = 'Klik på en blok = mute sporet i dét trin · klik på et trin-hoved = redigér (navn, gentag, riser…) · træk i MASTER FLT-banen = tegn filter-automation (dobbeltklik fjerner) · Tab = tilbage til steps';
+  hint.textContent = 'Linjal: klik = spil herfra (kvantiseret) · træk = loop-område · Blokke: klik = mute spor i trinnet · Hoveder: klik = redigér, træk = flyt, træk i kanten = gentagelser, højreklik = menu (split, dupliker, pause…) · Baner: træk = tegn automation, dobbeltklik = fjern · Tab = steps';
   el.appendChild(hint);
 }
 $('songLoopBtn').onclick = () => { st.songLoop = !st.songLoop; persist(); renderSong(); };
@@ -858,7 +1077,7 @@ function togglePlay() {
     playBtn.classList.remove('playing');
     clearPlayLEDs();
   } else {
-    player.play();
+    player.play(st.mode === 'song' ? (st._startEntry ?? 0) : 0);
     playBtn.textContent = '■';
     playBtn.classList.add('playing');
   }
@@ -972,14 +1191,27 @@ function tick() {
       }
       document.querySelectorAll('.patChip').forEach((c, i) => c.classList.toggle('playing', i === pos.pattern && player.playing));
       document.querySelectorAll('.songChip').forEach((c, i) => c.classList.toggle('playing', i === pos.songIdx && player.playing));
-      // playhead paa arrangement-tidslinjen
+      // playhead paa arrangement-tidslinjen + overview-strip + follow-scroll
       const ph = document.getElementById('arrPlayhead');
       if (ph) {
+        const miniPh = document.getElementById('arrMiniPh');
         if (pos.songStep != null && st.song.length) {
+          const frac = pos.songStep / Math.max(1, songTotalSteps());
           ph.hidden = false;
-          ph.style.left = `calc(122px + (100% - 122px) * ${pos.songStep / Math.max(1, songTotalSteps())})`;
+          ph.style.left = `calc(122px + (100% - 122px) * ${frac})`;
+          if (miniPh) { miniPh.hidden = false; miniPh.style.left = (frac * 100) + '%'; }
+          // follow: hold playheaden synlig naar der er zoomet ind
+          const sc = document.getElementById('arrScroll');
+          const wrap = document.getElementById('arrWrap');
+          if (sc && wrap && wrap.clientWidth > sc.clientWidth + 4) {
+            const phX = 122 + (wrap.clientWidth - 122) * frac;
+            if (phX < sc.scrollLeft + 130 || phX > sc.scrollLeft + sc.clientWidth - 60) {
+              sc.scrollLeft = Math.max(0, phX - sc.clientWidth * 0.35);
+            }
+          }
         } else {
           ph.hidden = true;
+          if (miniPh) miniPh.hidden = true;
         }
       }
     }
