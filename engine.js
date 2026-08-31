@@ -542,7 +542,8 @@ export class Player {
       const swingOff = (this.absStep % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
       schedStepAbs(this.rig, st, pat, this.absStep, this.nextTime + swingOff, stepDur, this.lastFreqs, fillAuto);
       this.stepLog.push({ t: this.nextTime, step: this.absStep % pat.len, abs: this.absStep, pattern: patIdx,
-        songIdx: songMode ? this.songPtr % st.song.length : null });
+        songIdx: songMode ? this.songPtr % st.song.length : null,
+        songStep: songMode ? this.songStep : null });
       if (this.stepLog.length > 80) this.stepLog.shift();
       this.nextTime += stepDur;
       this.absStep++;

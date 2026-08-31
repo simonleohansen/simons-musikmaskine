@@ -579,7 +579,8 @@ function renderSong() {
     if (e.riser) marks.push('↗');
     if (e.boom) marks.push('✸');
     if (e.fillLast) marks.push('FILL');
-    c.innerHTML = `${PATTERN_NAMES[e.p]}${(e.reps || 1) > 1 ? `<span class="reps">×${e.reps}</span>` : ''}`
+    c.innerHTML = (e.name ? `<span class="nm">${e.name}</span>` : '')
+      + `${PATTERN_NAMES[e.p]}${(e.reps || 1) > 1 ? `<span class="reps">×${e.reps}</span>` : ''}`
       + (marks.length ? `<span class="marks">${marks.join('·')}</span>` : '')
       + '<span class="x">✕</span>';
     c.onclick = ev => {
@@ -592,6 +593,7 @@ function renderSong() {
     };
     el.appendChild(c);
   });
+  if (typeof curView !== 'undefined' && curView === 'arr') renderArr();
 }
 // trin-editor: gentagelser, mute-maske, filter-automation, riser/boom/autofill
 function openSongEntry(ev, idx) {
@@ -602,7 +604,9 @@ function openSongEntry(ev, idx) {
   pop.id = 'entPop';
   const dots = st.tracks.map((tr, i) =>
     `<button class="muteDot" data-i="${i}" title="${tr.name}" style="--c:${tr.color}"></button>`).join('');
-  pop.innerHTML = `<div class="eucTitle">TRIN ${idx + 1} · PATTERN ${PATTERN_NAMES[e.p]}</div>
+  pop.innerHTML = `<div class="eucTitle">TRIN ${idx + 1} · PATTERN ${PATTERN_NAMES[e.p]}
+      <span style="margin-left:auto"><button id="entML" title="Flyt trin til venstre">◀</button><button id="entMR" title="Flyt trin til højre">▶</button></span></div>
+    <label>NAVN <input id="entName" type="text" maxlength="14" placeholder="fx INTRO, DROP…" spellcheck="false"></label>
     <label>GENTAG <button id="entRD">−</button> <b id="entRV"></b> <button id="entRI">+</button>
       <button id="entGoto" style="margin-left:auto">GÅ TIL PATTERN</button></label>
     <div class="entRow"><span class="plabel">SPOR</span><div class="muteDots">${dots}</div><button id="entMClr">ALLE MED</button></div>
@@ -633,6 +637,20 @@ function openSongEntry(ev, idx) {
     q('#entFill').classList.toggle('on', !!e.fillLast);
     renderSong();
   };
+  q('#entName').value = e.name || '';
+  q('#entName').oninput = () => {
+    e.name = q('#entName').value.trim().toUpperCase();
+    if (!e.name) delete e.name;
+    persist(); renderSong();
+  };
+  const move = d => {
+    const j = idx + d;
+    if (j < 0 || j >= st.song.length) return;
+    [st.song[idx], st.song[j]] = [st.song[j], st.song[idx]];
+    persist(); renderSong(); pop.remove();
+  };
+  q('#entML').onclick = () => move(-1);
+  q('#entMR').onclick = () => move(1);
   q('#entRD').onclick = () => { e.reps = Math.max(1, (e.reps || 1) - 1); persist(); sync(); };
   q('#entRI').onclick = () => { e.reps = Math.min(64, (e.reps || 1) + 1); persist(); sync(); };
   q('#entGoto').onclick = () => { st.curPattern = e.p; lockSel = null; persist(); renderAll(); };
@@ -656,6 +674,173 @@ function openSongEntry(ev, idx) {
   sync();
 }
 $('songAdd').onclick = () => { st.song.push({ p: st.curPattern, reps: 1, mutes: null }); persist(); renderSong(); };
+
+// ---------- ARRANGEMENT-view: sangen som tidslinje (Tab skifter, som i Ableton) ----------
+let curView = 'seq';
+function toggleView(v) {
+  curView = v || (curView === 'seq' ? 'arr' : 'seq');
+  $('seq').hidden = curView !== 'seq';
+  $('arr').hidden = curView !== 'arr';
+  $('viewToggle').textContent = curView === 'seq' ? '⇄ ARRANGEMENT' : '⇄ STEP-GRID';
+  $('viewToggle').classList.toggle('on', curView === 'arr');
+  if (curView === 'arr') renderArr();
+}
+$('viewToggle').onclick = () => toggleView();
+
+function entSteps(e) { return st.patterns[e.p].len * (e.reps || 1); }
+function songTotalSteps() { return st.song.reduce((a, raw) => a + entSteps(songEntry(raw)), 0); }
+// mini-preview af et spors loop som SVG-baggrund (gentages pr. loop via background-size)
+function trackMarksURI(ti, pIdx, color) {
+  const P = st.patterns[pIdx];
+  const L = (P.tlen && P.tlen[ti]) || P.len;
+  let rects = '';
+  for (let s = 0; s < L; s++) {
+    const stp = P.steps[ti][s];
+    if (!stp?.on) continue;
+    const h = 3.5 + 5.5 * (stp.v ?? 1);
+    rects += `<rect x="${s + 0.14}" y="${(12 - h) / 2}" width="0.72" height="${h}" rx="0.2"/>`;
+  }
+  if (!rects) return null;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${L} 12" preserveAspectRatio="none"><g fill="${color}">${rects}</g></svg>`;
+  return { uri: `url("data:image/svg+xml,${encodeURIComponent(svg)}")`, L };
+}
+function renderArr() {
+  const el = $('arr');
+  el.innerHTML = '';
+  if (!st.song.length) {
+    el.innerHTML = `<div id="arrEmpty">Tom tidslinje.<br><br>Byg sangen med <b>+ TILFØJ</b> i song-baren,<br>eller tryk <b>● JAM</b> og optag din live-jam som arrangement.</div>`;
+    return;
+  }
+  const entries = st.song.map(songEntry);
+  const total = songTotalSteps();
+  const wrap = document.createElement('div');
+  wrap.id = 'arrWrap';
+  const wPct = e => (entSteps(e) / total * 100) + '%';
+  // takt-linjal + trin-hoveder
+  const head = document.createElement('div');
+  head.className = 'arrRow arrHead';
+  head.innerHTML = '<div class="arrLabel">TAKT</div>';
+  const headIn = document.createElement('div');
+  headIn.className = 'arrLanes';
+  let accSteps = 0;
+  entries.forEach((e, i) => {
+    const b = document.createElement('button');
+    b.className = 'arrEnt';
+    b.style.width = wPct(e);
+    const marks = [];
+    if (e.mf !== undefined && e.mf !== null) marks.push('FLT');
+    if (e.riser) marks.push('↗');
+    if (e.boom) marks.push('✸');
+    if (e.fillLast) marks.push('FILL');
+    b.innerHTML = `<span class="bar">${Math.floor(accSteps / 16) + 1}</span>`
+      + `<b>${e.name || PATTERN_NAMES[e.p]}</b>`
+      + `<span class="sub">${e.name ? PATTERN_NAMES[e.p] : ''}${(e.reps || 1) > 1 ? '×' + e.reps : ''}${marks.length ? ' ' + marks.join('·') : ''}</span>`;
+    b.title = 'Klik: redigér trinnet';
+    b.onclick = ev => openSongEntry(ev, i);
+    headIn.appendChild(b);
+    accSteps += entSteps(e);
+  });
+  head.appendChild(headIn);
+  wrap.appendChild(head);
+  // spor-baner: blok = sporet spiller i trinnet; klik maler mute
+  st.tracks.forEach((tr, ti) => {
+    const row = document.createElement('div');
+    row.className = 'arrRow';
+    row.innerHTML = `<div class="arrLabel"><span class="trkDot" style="background:${tr.color}"></span>${tr.name}</div>`;
+    const lanes = document.createElement('div');
+    lanes.className = 'arrLanes';
+    entries.forEach((e, i) => {
+      const cell = document.createElement('div');
+      const muted = !!(e.mutes && e.mutes[ti]);
+      const mk = trackMarksURI(ti, e.p, '#0b0b0d');
+      cell.className = 'arrCell' + (muted ? ' muted' : '') + (!mk ? ' nodata' : '');
+      cell.style.width = wPct(e);
+      if (mk && !muted) {
+        cell.style.background = tr.color;
+        cell.style.backgroundImage = mk.uri;
+        cell.style.backgroundRepeat = 'repeat-x';
+        cell.style.backgroundSize = (mk.L / entSteps(e) * 100) + '% 100%';
+      }
+      if (mk) {
+        cell.title = muted ? tr.name + ' er mutet i dette trin — klik for at tænde' : 'Klik: mute ' + tr.name + ' i dette trin';
+        cell.onclick = () => {
+          e.mutes = e.mutes || new Array(8).fill(false);
+          e.mutes[ti] = !e.mutes[ti];
+          if (!e.mutes.some(Boolean)) e.mutes = null;
+          persist(); renderSong();
+        };
+      }
+      lanes.appendChild(cell);
+    });
+    row.appendChild(lanes);
+    wrap.appendChild(row);
+  });
+  // filter-automationsbane (traek for at saette, dobbeltklik for at fjerne)
+  const autoRow = document.createElement('div');
+  autoRow.className = 'arrRow arrAuto';
+  autoRow.innerHTML = '<div class="arrLabel">MASTER FLT</div>';
+  const autoLane = document.createElement('div');
+  autoLane.className = 'arrLanes';
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('id', 'arrAutoSvg');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('viewBox', '0 0 1000 100');
+  autoLane.appendChild(svg);
+  autoRow.appendChild(autoLane);
+  wrap.appendChild(autoRow);
+  const drawAuto = () => {
+    const pts = [[0, st.masterFilter ?? 0.5]];
+    let acc = 0;
+    for (const e of entries) {
+      acc += entSteps(e);
+      if (e.mf !== undefined && e.mf !== null) pts.push([acc / total, e.mf]);
+    }
+    pts.push([1, pts[pts.length - 1][1]]);
+    const path = pts.map(([x, v], i) => `${i ? 'L' : 'M'}${(x * 1000).toFixed(1)},${((1 - v) * 100).toFixed(1)}`).join(' ');
+    svg.innerHTML = `<line x1="0" y1="50" x2="1000" y2="50" class="mid"/>`
+      + `<path d="${path}" class="curve"/>`
+      + pts.slice(1, -1).map(([x, v]) =>
+        `<circle cx="${(x * 1000).toFixed(1)}" cy="${((1 - v) * 100).toFixed(1)}" r="6" class="pt"/>`).join('');
+  };
+  const entryAtX = frac => {
+    let acc = 0;
+    for (let i = 0; i < entries.length; i++) {
+      acc += entSteps(entries[i]) / total;
+      if (frac <= acc) return entries[i];
+    }
+    return entries[entries.length - 1];
+  };
+  let autoDrag = false;
+  const setFromEvent = ev => {
+    const r = svg.getBoundingClientRect();
+    if (!r.width) return;
+    const frac = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width));
+    const v = Math.max(0, Math.min(1, 1 - (ev.clientY - r.top) / r.height));
+    entryAtX(frac).mf = Math.round(v * 100) / 100;
+    persist(); drawAuto(); // chips/arr gen-renderes foerst ved pointerup (ellers ryger pointer capture)
+  };
+  svg.onpointerdown = ev => { autoDrag = true; try { svg.setPointerCapture(ev.pointerId); } catch (e2) {} setFromEvent(ev); };
+  svg.onpointermove = ev => { if (autoDrag) setFromEvent(ev); };
+  svg.onpointerup = () => { autoDrag = false; renderSong(); };
+  svg.ondblclick = ev => {
+    const r = svg.getBoundingClientRect();
+    const e = entryAtX(Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)));
+    delete e.mf;
+    persist(); renderSong();
+  };
+  drawAuto();
+  // playhead
+  const ph = document.createElement('div');
+  ph.id = 'arrPlayhead';
+  ph.hidden = true;
+  wrap.appendChild(ph);
+  el.appendChild(wrap);
+  const hint = document.createElement('div');
+  hint.id = 'arrHint';
+  hint.textContent = 'Klik på en blok = mute sporet i dét trin · klik på et trin-hoved = redigér (navn, gentag, riser…) · træk i MASTER FLT-banen = tegn filter-automation (dobbeltklik fjerner) · Tab = tilbage til steps';
+  el.appendChild(hint);
+}
 $('songLoopBtn').onclick = () => { st.songLoop = !st.songLoop; persist(); renderSong(); };
 $('modePattern').onclick = () => { st.mode = 'pattern'; persist(); renderSong(); };
 $('modeSong').onclick = () => {
@@ -697,6 +882,7 @@ window.addEventListener('keydown', e => {
   }
   if (e.key >= '1' && e.key <= '8') selectTrack(+e.key - 1);
   if ((e.key === 'f' || e.key === 'F') && !e.repeat) setFill(true);
+  if (e.key === 'Tab') { e.preventDefault(); toggleView(); }   // som i Ableton
   if (e.key === 'Escape') { if (lockSel) exitLock(); closeMenus(); }
 });
 window.addEventListener('keyup', e => {
@@ -786,6 +972,16 @@ function tick() {
       }
       document.querySelectorAll('.patChip').forEach((c, i) => c.classList.toggle('playing', i === pos.pattern && player.playing));
       document.querySelectorAll('.songChip').forEach((c, i) => c.classList.toggle('playing', i === pos.songIdx && player.playing));
+      // playhead paa arrangement-tidslinjen
+      const ph = document.getElementById('arrPlayhead');
+      if (ph) {
+        if (pos.songStep != null && st.song.length) {
+          ph.hidden = false;
+          ph.style.left = `calc(122px + (100% - 122px) * ${pos.songStep / Math.max(1, songTotalSteps())})`;
+        } else {
+          ph.hidden = true;
+        }
+      }
     }
     // filter-automationen bevæger master-slideren live
     if (player.autoMF != null && st.mode === 'song') {
@@ -922,7 +1118,7 @@ function syncTop() {
 }
 function renderAll() {
   renderPatternChips();
-  renderSong();
+  renderSong();   // gen-renderer ogsaa arrangement-viewet naar det er synligt
   renderSeq();
   renderPanel();
 }

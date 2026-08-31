@@ -126,6 +126,73 @@ input[type="number"], input[type="text"], #projName {
 .muteDot.muted { background: var(--panel2); border-color: var(--c); opacity: 0.7; }
 .entToggles { display: flex; gap: 5px; }
 .entToggles button { flex: 1; }
+.songChip .nm { color: var(--text); font-size: 9px; font-weight: 900; letter-spacing: 0.05em; }
+#entPop input[type="text"] { flex: 1; font-size: 11px; padding: 3px 6px; }
+
+/* ---------- ARRANGEMENT-view ---------- */
+#viewToggle.on { color: var(--acid); border-color: var(--acid); }
+#arr {
+  flex: 1 1 auto;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 14px;
+  min-height: 0;
+  overflow-y: auto;
+}
+#arrEmpty {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  text-align: center; color: var(--dim); font-size: 13px; line-height: 1.7;
+}
+#arrWrap { position: relative; display: flex; flex-direction: column; gap: 3px; flex: 1; min-height: 0; }
+.arrRow { display: flex; align-items: stretch; gap: 6px; flex: 1; min-height: 24px; }
+.arrRow.arrHead { flex: 0 0 34px; }
+.arrRow.arrAuto { flex: 0 0 56px; }
+.arrLabel {
+  flex: 0 0 116px;
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10px; font-weight: 800; letter-spacing: 0.05em; color: var(--dim);
+  overflow: hidden; white-space: nowrap;
+}
+.arrLanes { flex: 1; display: flex; gap: 2px; min-width: 0; position: relative; }
+.arrEnt {
+  position: relative;
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
+  padding: 2px 6px 2px 16px;
+  border-radius: 4px 4px 0 0;
+  overflow: hidden; white-space: nowrap;
+  text-align: left;
+}
+.arrEnt b { font-size: 11px; font-weight: 900; letter-spacing: 0.04em; color: var(--text); }
+.arrEnt .sub { font-size: 8px; color: var(--amber); font-weight: 800; }
+.arrEnt .bar {
+  position: absolute; left: 3px; top: 2px;
+  font-size: 8px; color: var(--dim); font-weight: 700;
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+}
+.arrCell {
+  border-radius: 3px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  min-width: 0;
+}
+.arrCell:hover { border-color: var(--line2); filter: brightness(1.15); }
+.arrCell.muted {
+  background: repeating-linear-gradient(-45deg, var(--panel2) 0 5px, #23232a 5px 10px);
+  opacity: 0.75;
+}
+.arrCell.nodata { cursor: default; opacity: 0.4; }
+#arrAutoSvg { width: 100%; height: 100%; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; cursor: crosshair; touch-action: none; }
+#arrAutoSvg .mid { stroke: var(--line2); stroke-width: 1; stroke-dasharray: 4 5; vector-effect: non-scaling-stroke; }
+#arrAutoSvg .curve { stroke: var(--amber); stroke-width: 2; fill: none; vector-effect: non-scaling-stroke; }
+#arrAutoSvg .pt { fill: var(--amber); }
+#arrPlayhead {
+  position: absolute; top: 0; bottom: 0; width: 2px;
+  background: #fff; opacity: 0.75;
+  pointer-events: none;
+  box-shadow: 0 0 6px #fff8;
+  z-index: 5;
+}
+#arrHint { flex: 0 0 auto; font-size: 9px; color: var(--dim); letter-spacing: 0.03em; }
 
 /* ---------- sequencer ---------- */
 #seq {
