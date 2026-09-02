@@ -220,6 +220,54 @@ input[type="number"], input[type="text"], #projName {
 
 /* ---------- SESSION VIEW (JAM) ---------- */
 #viewLabel { font-size: 12px; font-weight: 900; letter-spacing: 0.14em; color: var(--acid); }
+#jam { flex: 1 1 auto; min-height: 0; display: flex; }
+#midiBox { display: flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 800; color: var(--dim); letter-spacing: 0.06em; white-space: nowrap; }
+#midiDot { color: var(--line2); font-size: 11px; }
+#midiDot.ok { color: var(--acid); }
+#midiRec.on { color: #fff; background: var(--hot); border-color: var(--hot); animation: queueBlink 0.8s steps(2) infinite; }
+
+/* browser (lydbiblioteket) */
+#browser {
+  flex: 0 0 178px;
+  display: flex; flex-direction: column;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  overflow-y: auto;
+  padding: 6px;
+  gap: 4px;
+  position: relative;
+}
+#browser.collapsed { flex: 0 0 26px; overflow: hidden; padding: 6px 2px; }
+#brTog {
+  align-self: flex-end;
+  width: 20px; height: 20px; padding: 0;
+  font-size: 9px; color: var(--dim);
+  border: none; background: transparent;
+  flex: 0 0 auto;
+}
+.brSec {
+  font-size: 9px; font-weight: 900; letter-spacing: 0.14em;
+  color: var(--dim);
+  border-bottom: 1px solid var(--line);
+  padding: 6px 2px 3px;
+}
+.brList { display: flex; flex-direction: column; }
+.brRow {
+  display: flex; align-items: center; gap: 6px;
+  text-align: left;
+  padding: 4px 6px;
+  font-size: 10px; font-weight: 700;
+  color: var(--text);
+  border: none; background: transparent; border-radius: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  touch-action: none;
+}
+.brRow:hover { background: var(--panel2); color: var(--acid); }
+.brRow.dragging { opacity: 0.5; }
+.brIco { color: var(--dim); font-size: 10px; flex: 0 0 12px; }
+.brDot { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 8px; }
+.brEmpty { font-size: 9px; color: var(--dim); padding: 4px 6px; }
+.sesCol.dropOk { outline: 2px solid var(--acid); outline-offset: 1px; }
 .barHint { font-size: 9px; color: var(--dim); letter-spacing: 0.03em; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #session {
   flex: 1 1 auto;

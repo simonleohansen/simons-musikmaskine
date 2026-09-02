@@ -447,6 +447,119 @@ export function trig(rig, trIdx, patch, step, t, st, glideFrom = null, stepDur =
   return f;
 }
 
+// ---------- live MIDI-stemme (holdes til noteOff) ----------
+export function liveVoice(rig, trIdx, p, midi, vel = 1) {
+  const ctx = rig.ctx;
+  const t = ctx.currentTime + 0.004;
+  const f = midiToFreq(midi);
+  const att = Math.max(0.001, p.att ?? 0.002);
+  const dec = Math.max(0.03, p.dec ?? 0.3);
+  const sus = p.sus ?? 0;
+  const rel = Math.max(0.03, p.rel ?? 0.25);
+  const held = sus > 0.02;
+  const hardStop = t + 30;
+  const driftC = (p.drift ?? 0) * 12;
+  const sources = [];
+  const mix = ctx.createGain();
+  mix.gain.value = 1;
+  if ((p.wave ?? 'saw') !== 'noise') {
+    const o = ctx.createOscillator();
+    o.type = { saw: 'sawtooth', sqr: 'square', tri: 'triangle', sin: 'sine' }[p.wave] || 'sawtooth';
+    o.frequency.value = f;
+    if (driftC) o.detune.value = (Math.random() * 2 - 1) * driftC;
+    o.start(t); o.stop(hardStop);
+    o.connect(mix);
+    sources.push(o);
+    if ((p.sub ?? 0) > 0.02) {
+      const s = ctx.createOscillator();
+      s.type = 'sine'; s.frequency.value = f / 2;
+      s.start(t); s.stop(hardStop);
+      const sg = ctx.createGain(); sg.gain.value = p.sub;
+      s.connect(sg); sg.connect(mix);
+      sources.push(s);
+    }
+  }
+  if ((p.wave2 ?? 'off') !== 'off') {
+    const o2 = ctx.createOscillator();
+    o2.type = { saw: 'sawtooth', sqr: 'square', tri: 'triangle', sin: 'sine' }[p.wave2] || 'sawtooth';
+    o2.frequency.value = f * Math.pow(2, (p.semi2 ?? 0) / 12);
+    o2.detune.value = (p.det2 ?? 0) + (driftC ? (Math.random() * 2 - 1) * driftC : 0);
+    o2.start(t); o2.stop(hardStop);
+    const g2 = ctx.createGain(); g2.gain.value = p.mix2 ?? 0.5;
+    o2.connect(g2); g2.connect(mix);
+    sources.push(o2);
+  }
+  if ((p.noise ?? 0) > 0.02 || p.wave === 'noise') {
+    const ns = ctx.createBufferSource();
+    ns.buffer = noiseBuf(ctx); ns.loop = true;
+    ns.start(t); ns.stop(hardStop);
+    const ng = ctx.createGain();
+    ng.gain.value = p.wave === 'noise' ? 1 : p.noise;
+    ns.connect(ng); ng.connect(mix);
+    sources.push(ns);
+  }
+  let head = mix;
+  if ((p.drive ?? 0) > 0.02) {
+    const ws = ctx.createWaveShaper();
+    ws.curve = driveCurve(p.drive);
+    const comp = ctx.createGain(); comp.gain.value = 1 / (1 + p.drive * 0.8);
+    head.connect(ws); ws.connect(comp); head = comp;
+  }
+  const flt = ctx.createBiquadFilter();
+  flt.type = { lp: 'lowpass', hp: 'highpass', bp: 'bandpass' }[p.ftype ?? 'lp'] || 'lowpass';
+  flt.Q.value = (p.res ?? 0) * 18;
+  const baseCut = cutHz(p.cut ?? 0.8);
+  if ((p.fenv ?? 0) > 0.02) {
+    const peak = Math.min(18000, baseCut * Math.pow(2, p.fenv * 6));
+    flt.frequency.setValueAtTime(peak, t);
+    flt.frequency.exponentialRampToValueAtTime(Math.max(baseCut, 40), t + Math.max(0.02, p.fdec ?? 0.15));
+  } else {
+    flt.frequency.value = baseCut;
+  }
+  const amp = ctx.createGain();
+  const peakG = 0.75 * vel * (p.gainMul ?? 1);
+  amp.gain.setValueAtTime(0.0001, t);
+  amp.gain.linearRampToValueAtTime(peakG, t + att);
+  if (held) {
+    amp.gain.setTargetAtTime(peakG * sus, t + att, Math.max(0.01, dec / 3));
+  } else {
+    amp.gain.exponentialRampToValueAtTime(0.0001, t + att + dec);
+  }
+  const chokeGrp = p.choke ?? 0;
+  if (chokeGrp > 0) {
+    const grp = rig.choke[chokeGrp] || (rig.choke[chokeGrp] = []);
+    for (const v of grp) {
+      try { v.cancelAndHoldAtTime(t); } catch (e) { try { v.cancelScheduledValues(t); } catch (e2) {} }
+      v.setTargetAtTime(0.0001, t, 0.005);
+    }
+    grp.length = 0;
+    grp.push(amp.gain);
+  }
+  const pan = ctx.createStereoPanner();
+  pan.pan.value = Math.max(-1, Math.min(1, p.pan ?? 0));
+  head.connect(flt); flt.connect(amp); amp.connect(pan);
+  pan.connect(rig.trackIns[trIdx]);
+  if ((p.sendD ?? 0) > 0.02) {
+    const g = ctx.createGain(); g.gain.value = p.sendD;
+    pan.connect(g); g.connect(rig.dIn);
+  }
+  if ((p.sendV ?? 0) > 0.02) {
+    const g = ctx.createGain(); g.gain.value = p.sendV;
+    pan.connect(g); g.connect(rig.vIn);
+  }
+  let stopped = false;
+  return {
+    stop() {
+      if (stopped) return;
+      stopped = true;
+      const ts = ctx.currentTime + 0.002;
+      try { amp.gain.cancelAndHoldAtTime(ts); } catch (e) { try { amp.gain.cancelScheduledValues(ts); } catch (e2) {} }
+      amp.gain.setTargetAtTime(0.0001, ts, rel / 3);
+      for (const s of sources) { try { s.stop(ts + rel * 2.5 + 0.25); } catch (e) {} }
+    },
+  };
+}
+
 // ---------- planlaegning ----------
 // afgoer om et step fyrer (condition + probability)
 export function stepFires(step, loops, fill) {
@@ -736,8 +849,22 @@ export class Player {
     this.playing = false;
     this.stepLog = [];
   }
-  // hoer det valgte spors lyd én gang (med evt. step-lock)
-  async audition(trIdx, step = null) {
+  // live MIDI: spil en holdt tone paa et spor (gennem spillets rig hvis der spilles, ellers audition-riggen)
+  async liveNoteOn(trIdx, midi, vel = 1) {
+    const ctx = this.ensureCtx();
+    const st = this.getState();
+    let rig = this.playing ? this.rig : null;
+    if (!rig) {
+      if (!this.audRigP) this.audRigP = buildRig(ctx, st);
+      this.audRig = await this.audRigP;
+      st.tracks.forEach((tr, i) => { this.audRig.trackGains[i].gain.value = Math.max(0.0001, tr.level); });
+      setMasterFilter(this.audRig, st.masterFilter ?? 0.5);
+      rig = this.audRig;
+    }
+    return liveVoice(rig, trIdx, st.tracks[trIdx].patch, midi, vel);
+  }
+  // hoer det valgte spors lyd én gang (med evt. step-lock og evt. patch-override til preview)
+  async audition(trIdx, step = null, patchOverride = null) {
     const ctx = this.ensureCtx();
     const st = this.getState();
     if (!this.audRigP) this.audRigP = buildRig(ctx, st);
@@ -745,7 +872,7 @@ export class Player {
     // opdater gains i audition-riggen
     st.tracks.forEach((tr, i) => { this.audRig.trackGains[i].gain.value = Math.max(0.0001, tr.level); });
     setMasterFilter(this.audRig, st.masterFilter ?? 0.5);
-    trig(this.audRig, trIdx, st.tracks[trIdx].patch, step || { on: true, v: 1, n: 0, l: null },
+    trig(this.audRig, trIdx, patchOverride || st.tracks[trIdx].patch, step || { on: true, v: 1, n: 0, l: null },
       ctx.currentTime + 0.02, st, null, 60 / st.bpm / 4);
   }
 }
