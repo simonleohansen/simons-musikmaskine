@@ -312,11 +312,14 @@ function closeMenus() {
   if (ctxMenuEl) { ctxMenuEl.remove(); ctxMenuEl = null; }
   const e = $('eucPop'); if (e) e.remove();
   const s = $('entPop'); if (s) s.remove();
+  const c = $('cellPop'); if (c) c.remove();
 }
 window.addEventListener('pointerdown', e => {
   if (ctxMenuEl && !ctxMenuEl.contains(e.target)) closeMenus();
   const ep = $('entPop');
   if (ep && !ep.contains(e.target) && !e.target.closest('.songChip')) ep.remove();
+  const cp = $('cellPop');
+  if (cp && !cp.contains(e.target) && !e.target.closest('.arrCell')) cp.remove();
 });
 function openTrackMenu(e, ti) {
   closeMenus();
@@ -721,6 +724,7 @@ function entMarks(e) {
   if (e.riser) m.push('↗');
   if (e.boom) m.push('✸');
   if (e.fillLast) m.push('FILL');
+  if (e.cells && e.cells.some(c => c)) m.push('CLIP');
   return m;
 }
 // spil herfra: saetter startmarkoer; hopper kvantiseret hvis der spilles
@@ -771,6 +775,80 @@ function entryMenu(ev, i) {
   m.style.top = Math.min(ev.clientY, innerHeight - 280) + 'px';
   document.body.appendChild(m);
   ctxMenuEl = m;
+}
+// clip-editor for én blok (spor × trin): kilde-pattern, transponering, niveau, filter
+function openCellEditor(ev, idx, ti) {
+  closeMenus();
+  const e = songEntry(st.song[idx]);
+  st.song[idx] = e;
+  const tr = st.tracks[ti];
+  const pop = document.createElement('div');
+  pop.id = 'cellPop';
+  const srcBtns = PATTERN_NAMES.map((nm, pi) => {
+    const has = st.patterns[pi].steps[ti].some(s => s?.on);
+    return `<button class="srcBtn" data-p="${pi}" ${has ? '' : 'disabled'}>${nm}</button>`;
+  }).join('');
+  pop.innerHTML = `<div class="eucTitle" style="color:${tr.color}">${tr.name} · TRIN ${idx + 1}</div>
+    <div class="entRow"><span class="plabel">KILDE</span><div class="srcRow">${srcBtns}</div></div>
+    <label>TONE <input id="cpN" type="range" min="-24" max="24" step="1"> <b id="cpNV"></b></label>
+    <label>NIVEAU <input id="cpL" type="range" min="0.05" max="1" step="0.01"> <b id="cpLV"></b></label>
+    <label>CUTOFF <input id="cpC" type="range" min="0" max="1" step="0.01"> <b id="cpCV"></b> <button id="cpCX">✕</button></label>
+    <div class="eucBtns"><button id="cpMute"></button><button id="cpReset">NULSTIL CLIP</button><button id="cpClose">LUK</button></div>`;
+  pop.style.left = Math.min(ev.clientX - 30, innerWidth - 280) + 'px';
+  pop.style.top = Math.min(ev.clientY + 12, innerHeight - 240) + 'px';
+  document.body.appendChild(pop);
+  pop.onpointerdown = evt => evt.stopPropagation();
+  const q = s => pop.querySelector(s);
+  const cellNow = () => (e.cells && e.cells[ti]) || null;
+  const ensure = () => {
+    e.cells = e.cells || new Array(8).fill(null);
+    e.cells[ti] = e.cells[ti] || {};
+    return e.cells[ti];
+  };
+  const cleanup = () => {
+    const c = cellNow();
+    if (c && (c.p == null || c.p === e.p) && !c.n && (c.lvl ?? 1) === 1 && c.cut == null) {
+      e.cells[ti] = null;
+      if (!e.cells.some(x => x)) delete e.cells;
+    }
+  };
+  const sync = () => {
+    const c = cellNow();
+    const effP = c && c.p != null ? c.p : e.p;
+    pop.querySelectorAll('.srcBtn').forEach(b2 => b2.classList.toggle('on', +b2.dataset.p === effP));
+    q('#cpN').value = c?.n ?? 0;
+    q('#cpNV').textContent = (c?.n ?? 0) > 0 ? '+' + c.n : (c?.n ?? 0);
+    q('#cpL').value = c?.lvl ?? 1;
+    q('#cpLV').textContent = Math.round((c?.lvl ?? 1) * 100) + '%';
+    const hasCut = c && c.cut != null;
+    q('#cpC').value = hasCut ? c.cut : 0.8;
+    q('#cpC').classList.toggle('unset', !hasCut);
+    q('#cpCV').textContent = hasCut ? Math.round(c.cut * 100) + '%' : '—';
+    const muted = !!(e.mutes && e.mutes[ti]);
+    q('#cpMute').textContent = muted ? 'UNMUTE' : 'MUTE';
+    q('#cpMute').classList.toggle('on', muted);
+    renderSong();
+  };
+  pop.querySelectorAll('.srcBtn').forEach(b2 => {
+    b2.onclick = () => {
+      ensure().p = +b2.dataset.p;
+      if (e.mutes && e.mutes[ti]) { e.mutes[ti] = false; if (!e.mutes.some(Boolean)) e.mutes = null; }
+      cleanup(); persist(); sync();
+    };
+  });
+  q('#cpN').oninput = () => { const v = +q('#cpN').value; if (v) ensure().n = v; else if (cellNow()) delete cellNow().n; cleanup(); persist(); sync(); };
+  q('#cpL').oninput = () => { const v = +q('#cpL').value; if (v < 0.995) ensure().lvl = v; else if (cellNow()) delete cellNow().lvl; cleanup(); persist(); sync(); };
+  q('#cpC').oninput = () => { ensure().cut = +q('#cpC').value; persist(); sync(); };
+  q('#cpCX').onclick = () => { if (cellNow()) delete cellNow().cut; cleanup(); persist(); sync(); };
+  q('#cpMute').onclick = () => {
+    e.mutes = e.mutes || new Array(8).fill(false);
+    e.mutes[ti] = !e.mutes[ti];
+    if (!e.mutes.some(Boolean)) e.mutes = null;
+    persist(); sync();
+  };
+  q('#cpReset').onclick = () => { if (e.cells) { e.cells[ti] = null; if (!e.cells.some(x => x)) delete e.cells; } persist(); sync(); };
+  q('#cpClose').onclick = () => pop.remove();
+  sync();
 }
 function renderArr() {
   const el = $('arr');
@@ -885,7 +963,7 @@ function renderArr() {
     b.style.setProperty('--pc', PAT_COLORS[e.p]);
     b.dataset.i = i;
     const marks = entMarks(e);
-    const patEmpty = !patternHasData(st.patterns[e.p]);
+    const patEmpty = !patternHasData(st.patterns[e.p]) && !(e.cells && e.cells.some(c => c));
     if (patEmpty) b.classList.add('empty');
     const subTxt = () => `${e.name ? PATTERN_NAMES[e.p] : ''}${(e.reps || 1) > 1 ? '×' + e.reps : ''}${marks.length ? ' ' + marks.join('·') : ''}${patEmpty ? ' ⚠ PATTERN ' + PATTERN_NAMES[e.p] + ' ER TOMT' : ''}`;
     b.innerHTML = `<b>${e.name || PATTERN_NAMES[e.p]}</b><span class="sub">${subTxt()}</span><span class="grip"></span>`;
@@ -954,7 +1032,9 @@ function renderArr() {
   });
   head.appendChild(headIn);
   wrap.appendChild(head);
-  // spor-baner: blok = sporet spiller i trinnet; klik maler mute. Label = mini-mixer
+  // spor-baner: hver blok er en CLIP — klik = mute, traek = flyt lyden (alt = kopiér),
+  // hoejreklik = clip-editor (kilde-pattern, transponering, niveau, filter)
+  let cellDrag = null;
   st.tracks.forEach((tr, ti) => {
     const row = document.createElement('div');
     row.className = 'arrRow';
@@ -968,25 +1048,86 @@ function renderArr() {
     lanes.className = 'arrLanes';
     entries.forEach((e, i) => {
       const cell = document.createElement('div');
+      const cOv = e.cells ? e.cells[ti] : null;
+      const effP = cOv && cOv.p != null ? cOv.p : e.p;
       const muted = !!(e.mutes && e.mutes[ti]);
-      const mk = trackMarksURI(ti, e.p, '#0b0b0d');
+      const mk = trackMarksURI(ti, effP, '#0b0b0d');
       cell.className = 'arrCell' + (muted ? ' muted' : '') + (!mk ? ' nodata' : '');
       cell.style.width = wPct(e);
+      cell.dataset.ti = ti;
+      cell.dataset.i = i;
       if (mk && !muted) {
         cell.style.background = tr.color;
         cell.style.backgroundImage = mk.uri;
         cell.style.backgroundRepeat = 'repeat-x';
         cell.style.backgroundSize = (mk.L / entSteps(e) * 100) + '% 100%';
+        if ((cOv?.lvl ?? 1) < 0.95) cell.style.opacity = 0.35 + 0.65 * cOv.lvl;
       }
-      if (mk) {
-        cell.title = muted ? tr.name + ' er mutet i dette trin — klik for at tænde' : 'Klik: mute ' + tr.name + ' i dette trin';
-        cell.onclick = () => {
-          e.mutes = e.mutes || new Array(8).fill(false);
-          e.mutes[ti] = !e.mutes[ti];
-          if (!e.mutes.some(Boolean)) e.mutes = null;
-          persist(); renderSong();
-        };
-      }
+      // clip-badges: kilde-pattern og transponering
+      const badges = [];
+      if (cOv && cOv.p != null && cOv.p !== e.p) badges.push(PATTERN_NAMES[cOv.p]);
+      if (cOv?.n) badges.push((cOv.n > 0 ? '+' : '') + cOv.n);
+      if (cOv?.cut != null) badges.push('FLT');
+      if (badges.length) cell.innerHTML = `<span class="cellBadge">${badges.join(' ')}</span>`;
+      cell.title = mk
+        ? `${tr.name}${cOv && cOv.p != null ? ' (fra pattern ' + PATTERN_NAMES[cOv.p] + ')' : ''} — klik: mute · træk: flyt (alt: kopiér) · højreklik: redigér clip`
+        : `${tr.name} er tom her — højreklik/klik for at hente lyd fra et andet pattern`;
+      cell.onpointerdown = ev => {
+        if (ev.button !== 0 || !mk || muted) return;
+        cellDrag = { ti, i, x0: ev.clientX, y0: ev.clientY, moved: false, el: cell, target: null };
+        try { cell.setPointerCapture(ev.pointerId); } catch (e2) {}
+      };
+      cell.onpointermove = ev => {
+        if (!cellDrag || cellDrag.el !== cell) return;
+        if (!cellDrag.moved && Math.abs(ev.clientX - cellDrag.x0) < 8 && Math.abs(ev.clientY - cellDrag.y0) < 8) return;
+        cellDrag.moved = true;
+        cell.classList.add('dragging');
+        const t2 = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.arrCell');
+        lanes.parentElement.parentElement.querySelectorAll('.arrCell.dropOk').forEach(x => x.classList.remove('dropOk'));
+        if (t2 && +t2.dataset.ti === ti && +t2.dataset.i !== i) {
+          t2.classList.add('dropOk');
+          cellDrag.target = +t2.dataset.i;
+        } else {
+          cellDrag.target = null;
+        }
+      };
+      const endCell = ev => {
+        if (!cellDrag || cellDrag.el !== cell) return;
+        const d = cellDrag;
+        cellDrag = null;
+        cell.classList.remove('dragging');
+        if (d.moved) {
+          suppressEntClick = false;
+          if (d.target != null) {
+            const srcE = entries[d.i], tgtE = entries[d.target];
+            tgtE.cells = tgtE.cells || new Array(8).fill(null);
+            tgtE.cells[ti] = { ...(cOv || {}), p: effP };
+            if (tgtE.mutes) { tgtE.mutes[ti] = false; if (!tgtE.mutes.some(Boolean)) tgtE.mutes = null; }
+            const copy = ev && ev.altKey;
+            if (!copy) { // flyt: mut kilden
+              srcE.mutes = srcE.mutes || new Array(8).fill(false);
+              srcE.mutes[ti] = true;
+            }
+            persist(); renderSong();
+            toast((copy ? 'Kopierede ' : 'Flyttede ') + tr.name + ' til trin ' + (d.target + 1));
+          } else {
+            renderSong();
+          }
+          cell._suppress = true;
+          setTimeout(() => { cell._suppress = false; }, 0);
+        }
+      };
+      cell.onpointerup = endCell;
+      cell.onpointercancel = () => endCell(null);
+      cell.onclick = ev => {
+        if (cell._suppress) { cell._suppress = false; return; }
+        if (!mk) { openCellEditor(ev, i, ti); return; }
+        e.mutes = e.mutes || new Array(8).fill(false);
+        e.mutes[ti] = !e.mutes[ti];
+        if (!e.mutes.some(Boolean)) e.mutes = null;
+        persist(); renderSong();
+      };
+      cell.oncontextmenu = ev => { ev.preventDefault(); openCellEditor(ev, i, ti); };
       lanes.appendChild(cell);
     });
     row.appendChild(lanes);
@@ -1059,7 +1200,7 @@ function renderArr() {
   el.appendChild(scroller);
   const hint = document.createElement('div');
   hint.id = 'arrHint';
-  hint.textContent = 'Linjal: klik = spil herfra (kvantiseret) · træk = loop-område · Blokke: klik = mute spor i trinnet · Hoveder: klik = redigér, træk = flyt, træk i kanten = gentagelser, højreklik = menu (split, dupliker, pause…) · Baner: træk = tegn automation, dobbeltklik = fjern · Tab = steps';
+  hint.textContent = 'Blokke (clips): klik = mute · TRÆK = flyt lyden til et andet trin (alt+træk = kopiér) · højreklik = clip-editor (kilde-pattern, tone, niveau, filter) · Linjal: klik = spil herfra, træk = loop · Hoveder: klik = redigér, træk = flyt, kant = gentagelser, højreklik = menu · Baner: træk = automation · Tab = steps';
   el.appendChild(hint);
 }
 $('songLoopBtn').onclick = () => { st.songLoop = !st.songLoop; persist(); renderSong(); };

@@ -458,20 +458,33 @@ export function stepFires(step, loops, fill) {
 export function trackLen(pattern, tr) {
   return (pattern.tlen && pattern.tlen[tr]) || pattern.len;
 }
-// planlaeg ét absolut step for alle spor (polymeter: hvert spor har sin egen laengde)
-export function schedStepAbs(rig, st, pattern, absStep, t, stepDur, lastFreqs, forceFill = false) {
+// planlaeg ét absolut step for alle spor (polymeter: hvert spor har sin egen laengde).
+// entry.cells[tr] kan overstyre et spor i et song-trin (clip-model):
+//   {p: kilde-pattern, n: transponering, lvl: niveau 0..1, cut: cutoff-override}
+export function schedStepAbs(rig, st, pattern, absStep, t, stepDur, lastFreqs, forceFill = false, entry = null) {
   const loops = Math.floor(absStep / pattern.len);
   const fill = !!st._fill || forceFill;
   const src = st.duckTrack ?? 0;
   for (let tr = 0; tr < st.tracks.length; tr++) {
-    const idx = absStep % trackLen(pattern, tr);
-    const step = pattern.steps[tr][idx];
+    const cell = entry && entry.cells ? entry.cells[tr] : null;
+    const pat = cell && cell.p != null ? st.patterns[cell.p] : pattern;
+    const idx = absStep % trackLen(pat, tr);
+    const step = pat.steps[tr][idx];
     if (!stepFires(step, loops, fill)) continue;
     const track = st.tracks[tr];
+    const vScale = cell?.lvl ?? 1;
+    const nOff = cell?.n ?? 0;
+    const cellL = cell && cell.cut != null ? { ...(step.l || {}), cut: cell.cut } : step.l;
     const r = Math.max(1, Math.min(8, step.r ?? 1));
     for (let k = 0; k < r; k++) {
       const subT = t + (k * stepDur) / r;
-      const subStep = k === 0 ? step : { ...step, v: (step.v ?? 1) * Math.max(0.3, 1 - k * 0.13) };
+      let subStep = step;
+      if (k > 0 || vScale !== 1 || nOff || cellL !== step.l) {
+        subStep = { ...step,
+          v: (step.v ?? 1) * vScale * (k > 0 ? Math.max(0.3, 1 - k * 0.13) : 1),
+          n: (step.n || 0) + nOff,
+          l: cellL };
+      }
       lastFreqs[tr] = trig(rig, tr, track.patch, subStep, subT, st, lastFreqs[tr], stepDur);
       if (tr === src) schedDuck(rig, st, subT);
     }
@@ -577,7 +590,7 @@ export class Player {
       const fillAuto = songMode && !!entry.fillLast && this.entryLoop === (entry.reps || 1) - 1;
       // swing paa de ulige 16.-dele
       const swingOff = (this.absStep % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
-      schedStepAbs(this.rig, st, pat, this.absStep, this.nextTime + swingOff, stepDur, this.lastFreqs, fillAuto);
+      schedStepAbs(this.rig, st, pat, this.absStep, this.nextTime + swingOff, stepDur, this.lastFreqs, fillAuto, entry);
       this.stepLog.push({ t: this.nextTime, step: this.absStep % pat.len, abs: this.absStep, pattern: patIdx,
         songIdx: songMode ? this.songPtr % st.song.length : null,
         songStep: songMode ? this.songStep : null });
@@ -720,7 +733,7 @@ export async function renderWav(st, what = 'song') {
         }
         stR._pumpAuto = autos.pump.pts.length ? autoAt(autos.pump, inits.pump, songStep + 1) : null;
         const swingOff = (absStep % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
-        schedStepAbs(rig, stR, pat, absStep, t + swingOff, stepDur, lastFreqs, fillAuto);
+        schedStepAbs(rig, stR, pat, absStep, t + swingOff, stepDur, lastFreqs, fillAuto, isSong ? e : null);
         t += stepDur;
         absStep++;
         songStep++;

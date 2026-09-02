@@ -236,7 +236,35 @@ input[type="number"], input[type="text"], #projName {
   background: repeating-linear-gradient(-45deg, var(--panel2) 0 5px, #23232a 5px 10px);
   opacity: 0.75;
 }
-.arrCell.nodata { cursor: default; opacity: 0.4; }
+.arrCell.nodata { cursor: pointer; opacity: 0.4; }
+.arrCell { position: relative; touch-action: none; }
+.arrCell.dragging { opacity: 0.45; outline: 1px dashed var(--acid); }
+.arrCell.dropOk { outline: 2px solid var(--acid); outline-offset: 1px; z-index: 2; }
+.cellBadge {
+  position: absolute; left: 3px; top: 2px;
+  font-size: 8px; font-weight: 900; letter-spacing: 0.04em;
+  color: #0b0b0d; background: #ffffffb0;
+  border-radius: 3px; padding: 0 3px;
+  pointer-events: none;
+}
+.arrCell.nodata .cellBadge, .arrCell.muted .cellBadge { color: var(--text); background: #0b0b0dcc; }
+#cellPop {
+  position: fixed; z-index: 200;
+  display: flex; flex-direction: column; gap: 8px;
+  background: var(--panel); border: 1px solid var(--acid); border-radius: 6px;
+  padding: 10px 12px; box-shadow: 0 8px 30px #000c;
+  width: 262px;
+}
+#cellPop label, #cellPop .entRow { display: flex; align-items: center; gap: 6px; font-size: 9px; font-weight: 700; color: var(--dim); }
+#cellPop b { min-width: 30px; text-align: right; color: var(--text); font-size: 11px; }
+#cellPop button { padding: 3px 7px; font-size: 9px; }
+#cellPop input[type="range"] { flex: 1; accent-color: var(--acid); }
+#cellPop input[type="range"].unset { opacity: 0.35; }
+#cellPop #cpMute.on { color: #fff; background: var(--hot); border-color: var(--hot); }
+.srcRow { display: flex; gap: 3px; flex: 1; }
+.srcBtn { flex: 1; padding: 3px 0 !important; font-weight: 800; }
+.srcBtn:disabled { opacity: 0.25; cursor: default; }
+.srcBtn.on { color: #0b0b0d; background: var(--acid); border-color: var(--acid); }
 .autoSvg { width: 100%; height: 100%; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; cursor: crosshair; touch-action: none; }
 .autoSvg .mid { stroke: var(--line2); stroke-width: 1; stroke-dasharray: 4 5; vector-effect: non-scaling-stroke; }
 .autoSvg .curve { stroke-width: 2; fill: none; vector-effect: non-scaling-stroke; }
