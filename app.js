@@ -1,9 +1,9 @@
 // SIMONS MUSIKMASKINE — UI og tilstand (v6: Ableton-model i arrangementet —
 // frie clips pr. spor med position/laengde/kilde/overrides, markoerer, tempo-skift,
 // fri automation, loop-brace i takter, seek, JAM-til-clips)
-import { Player, renderWav, noteName, cutHz, songEntry, entrySteps, emptyArr, arrLenSteps, tempoAt, songDurationSec, BAR, recBuffers, registerRecBuffer, encodeWav } from './engine.js?v=7';
+import { Player, renderWav, noteName, cutHz, songEntry, entrySteps, emptyArr, arrLenSteps, tempoAt, songDurationSec, BAR, recBuffers, registerRecBuffer, encodeWav } from './engine.js?v=8';
 
-const APP_VER = 'v7';
+const APP_VER = 'v8';
 const $ = id => document.getElementById(id);
 const PATTERN_NAMES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 const TRACK_COLORS = ['#ff3d5a', '#ff9f2e', '#ffd83d', '#c8ff2e', '#3dffc0', '#3db9ff', '#a06bff', '#ff5ad0'];

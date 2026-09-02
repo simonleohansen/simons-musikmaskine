@@ -229,7 +229,7 @@ input[type="number"], input[type="text"], #projName {
   display: flex; align-items: center; gap: 5px;
   font-size: 10px; font-weight: 800; letter-spacing: 0.05em; color: var(--dim);
   overflow: hidden; white-space: nowrap;
-  position: sticky; left: 0; z-index: 3;
+  position: sticky; left: 0; z-index: 6; /* over clips (sel=3/drag=4) og playhead — intet maa taegge labels */
   background: var(--bg);
 }
 .arrLabel .ln { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
