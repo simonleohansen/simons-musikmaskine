@@ -640,51 +640,92 @@ export function liveOf(st) {
   }
   return st._live;
 }
-// FOLLOW ACTIONS: clips der selv skifter/stopper efter N gennemloeb (Ableton-manualen).
-// Koeres ved takt-graensen FOER applyQueued — brugerens egen koe vinder altid.
+// FOLLOW ACTIONS (Live 12-model): A/B-actions med Chance, multiplier og grupper.
+// En gruppe = sammenhaengende fyldte slots i sporet; tomme slots bryder gruppen.
+// Gammelt format {act, after, chance} migreres on-the-fly via faOf().
+export function faOf(clip) {
+  const f = clip && clip.fa;
+  if (!f) return null;
+  if (f.a !== undefined || f.b !== undefined) return f.on === false ? null : f;
+  if (!f.act || f.act === 'none') return null;
+  return { on: true, a: f.act, b: 'none', ca: f.chance ?? 1, mult: f.after || 4 };
+}
 export function applyFollowActions(st, absStep) {
   const live = liveOf(st);
   const scenes = (st.session && st.session.scenes) || [];
   live.forEach((L, tr) => {
     if (!L.play || L.next !== undefined) return;
     const clip = st.clips[L.play];
-    if (!clip || !clip.fa || !clip.fa.act || clip.fa.act === 'none') return;
+    if (!clip) return;
     const rel = absStep - L.at;
     if (rel <= 0 || rel % clip.len !== 0) return;
     const loops = rel / clip.len;
-    if (loops % (clip.fa.after || 4) !== 0) return;
-    if (Math.random() > (clip.fa.chance ?? 1)) return;
+    // Loop slaaet fra (one-shot): stop efter foerste gennemloeb
+    if (clip.loopOff && loops >= 1) { L.next = 'stop'; L.faNext = true; return; }
+    const fa = faOf(clip);
+    if (!fa) return;
+    if (loops % (fa.mult || 1) !== 0) return;
+    const act = Math.random() < (fa.ca ?? 1) ? fa.a : fa.b;
+    if (!act || act === 'none') return;
     const slots = scenes.map(sc => sc.slots[tr]);
     const si = slots.indexOf(L.play);
-    const act = clip.fa.act;
+    let g0 = si, g1 = si;
+    while (g0 > 0 && slots[g0 - 1]) g0--;
+    while (g1 < slots.length - 1 && slots[g1 + 1]) g1++;
+    const group = slots.slice(g0, g1 + 1);
+    const gi = si - g0;
     let target = null;
     if (act === 'stop') target = 'stop';
-    else if (act === 'first') target = slots.find(x => x) || null;
-    else if (act === 'any') {
-      const opts = slots.filter(x => x && x !== L.play);
+    else if (act === 'again') { L.at = absStep; return; }
+    else if (act === 'first') target = group[0];
+    else if (act === 'last') target = group[group.length - 1];
+    else if (act === 'prev') target = group[(gi - 1 + group.length) % group.length];
+    else if (act === 'next') target = group[(gi + 1) % group.length];
+    else if (act === 'any') target = group[Math.floor(Math.random() * group.length)];
+    else if (act === 'other') {
+      const opts = group.filter(x => x !== L.play);
       target = opts.length ? opts[Math.floor(Math.random() * opts.length)] : null;
-    } else { // 'next' (nedad, wrapper) — spring slots med samme clip over
-      for (let k = 1; k <= slots.length; k++) {
-        const cand = slots[(si + k) % slots.length];
-        if (cand && cand !== L.play) { target = cand; break; }
-      }
+    } else if (act === 'jump') {
+      target = slots[Math.max(0, Math.min(slots.length - 1, fa.jump ?? 0))] || null;
     }
-    if (target) L.next = target;
+    if (target === L.play) { L.at = absStep; return; } // relaunch samme clip
+    if (target) { L.next = target; L.faNext = true; }
   });
 }
-// anvend koeede launches/stops ved takt-graensen (launch-kvantisering = kernen i Ableton-foelelsen)
+// LAUNCH QUANTIZATION (Live-model): global chooser + per-clip override.
+// st.quant i steps (16 = 1 Bar, 0 = None/straks). clip.q: undefined = Global, ellers steps (0 = None).
+export function clipQuant(st, clip) {
+  if (clip && clip.q !== undefined && clip.q !== null) return clip.q;
+  return st.quant ?? BAR;
+}
+// anvend koeede launches/stops naar kvantiseringspunktet rammes.
+// Follow actions omgaar GLOBAL kvantisering, men ikke clip-kvantisering (manualen 16.4).
 export function applyQueued(st, absStep) {
   const live = liveOf(st);
-  for (const L of live) {
-    if (L.next === undefined) continue;
-    if (L.next === 'stop' || L.next === null) {
-      L.play = null;
-    } else {
-      L.play = L.next;
-      L.at = absStep;
-    }
+  live.forEach(L => {
+    if (L.next === undefined) return;
+    const target = L.next && L.next !== 'stop' ? st.clips[L.next] : (L.play ? st.clips[L.play] : null);
+    let q;
+    if (L.faNext) q = target && target.q !== undefined && target.q !== null ? target.q : 0;
+    else q = clipQuant(st, target);
+    if (q > 0 && absStep % q !== 0) return;
+    if (L.next === 'stop' || L.next === null) L.play = null;
+    else { L.play = L.next; L.at = absStep; }
     L.next = undefined;
-  }
+    L.faNext = false;
+  });
+}
+// METRONOM (Control Bar): kort klik pr. beat, accent paa 1-slaget. Kun live, aldrig i eksport.
+export function schedMetro(rig, st, step, t) {
+  if (!st.metro || step % 4) return;
+  const ctx = rig.ctx;
+  const o = ctx.createOscillator(), g = ctx.createGain();
+  const accent = step % BAR === 0;
+  o.frequency.value = accent ? 1600 : 1050;
+  g.gain.setValueAtTime(accent ? 0.26 : 0.16, t);
+  g.gain.exponentialRampToValueAtTime(0.0008, t + 0.05);
+  o.connect(g); g.connect(rig.limiter);
+  o.start(t); o.stop(t + 0.06);
 }
 // planlaeg ét step i JAM (session): hvert spor spiller sin launched clip
 export function schedJamStep(rig, st, absStep, t, stepDur, lastFreqs) {
@@ -864,6 +905,7 @@ export class Player {
         }
         st._pumpAuto = autoValAt(st.arr.auto.pump, s + 1);
         const swingOff = (s % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
+        schedMetro(this.rig, st, s, this.nextTime);
         schedArrStep(this.rig, st, s, this.nextTime + swingOff, stepDur, this.lastFreqs, this._enter);
         this._enter = false;
         this.stepLog.push({ t: this.nextTime, step: s % BAR, abs: s, pattern: null, songStep: s });
@@ -891,11 +933,10 @@ export class Player {
         // ----- JAM (session): hvert spor spiller sin launched clip, koeer anvendes pr. takt -----
         this.curBpm = st.bpm;
         const stepDur = 60 / st.bpm / 4;
-        if (this.absStep % BAR === 0) {
-          applyFollowActions(st, this.absStep);
-          applyQueued(st, this.absStep);
-        }
+        if (this.absStep % BAR === 0) applyFollowActions(st, this.absStep);
+        applyQueued(st, this.absStep);
         const swingOff = (this.absStep % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
+        schedMetro(this.rig, st, this.absStep, this.nextTime);
         schedJamStep(this.rig, st, this.absStep, this.nextTime + swingOff, stepDur, this.lastFreqs);
         this.stepLog.push({ t: this.nextTime, step: this.absStep % BAR, abs: this.absStep, pattern: null, songStep: null, jam: true });
         if (this.stepLog.length > 80) this.stepLog.shift();

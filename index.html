@@ -4,44 +4,64 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Simons Musikmaskine</title>
-<link rel="stylesheet" href="style.css?v=15">
+<link rel="stylesheet" href="style.css?v=16">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%230b0b0d'/><text x='50' y='72' font-size='58' text-anchor='middle' fill='%23c8ff2e' font-family='monospace' font-weight='bold'>S</text></svg>">
 </head>
 <body>
 
+<!-- CONTROL BAR (Live 12-rækkefølge: tempo → position/transport → loop → view selector) -->
 <header id="top">
   <div id="logo">SIMONS<span>MUSIKMASKINE</span><i id="verTag"></i></div>
-  <button id="playBtn" title="Play/Stop (mellemrum)">►</button>
-  <button id="fillBtn" title="Hold nede for FILL (eller hold F-tasten)">FILL</button>
-  <button id="autoBtn" title="AUTOMATION-OPTAGELSE: mens musikken spiller, skrives dine knap-bevægelser ind — synth-knapper → step-locks i den spillende clip (JAM), MASTER FLT/VOL/PUMP → automations-banerne (SANG)">✳ AUTO</button>
-  <button id="recBtn" title="Optag din stemme som audio-clip på det valgte spor (🎧 brug hovedtelefoner). Spiller sangen, starter optagelsen på næste takt">🎙 OPTAG</button>
-  <div class="tgroup">
-    <label>BPM <input type="number" id="bpm" min="60" max="200" value="132"></label>
+  <div class="cbSec" id="secTempo" title="Tempo Settings and Metronome">
+    <button id="tapBtn" title="Tap Tempo — tap i takt, så sættes BPM">Tap</button>
+    <input type="number" id="bpm" min="60" max="200" value="132" title="Tempo (BPM)">
+    <button id="metroBtn" title="Metronome (tast O) — klik pr. beat, accent på 1-slaget">◔</button>
     <label>SWING <input type="range" id="swing" min="0" max="0.6" step="0.01" value="0.12"><span id="swingVal">12%</span></label>
     <label>PUMP <input type="range" id="pump" min="0" max="1" step="0.01" value="0.4"><span id="pumpVal">40%</span></label>
   </div>
-  <div class="tgroup" id="masterGroup">
+  <div class="cbSec" id="secTransport" title="Transport Controls">
+    <span id="posBox" title="Arrangement Position (takter. slag. sekstendedele)">1. 1. 1</span>
+    <button id="playBtn" title="Play (mellemrum)">▶</button>
+    <button id="stopBtn" title="Stop">■</button>
+    <button id="recBtn" title="Optag din stemme som audio-clip på det valgte spor (🎧 brug hovedtelefoner). Starter på næste takt">●</button>
+    <button id="fillBtn" title="Hold nede for FILL (eller hold F-tasten)">FILL</button>
+    <button id="autoBtn" title="Automation Arm: mens musikken spiller, skrives dine knap-bevægelser ind — synth-knapper → step-locks i den spillende clip (Session), MASTER FLT/VOL/PUMP → automations-banerne (Arrangement)">✳</button>
+  </div>
+  <div class="cbSec" id="secQuant" title="Quantization — hvornår kvantiserede launches rammer">
+    <label>Q <select id="quantSel" title="Global Launch Quantization: koen anvendes ved dette interval (per-clip kan overstyre i Clip View)">
+      <option value="0">None</option>
+      <option value="4">1/4</option>
+      <option value="8">1/2</option>
+      <option value="16" selected>1 Bar</option>
+      <option value="32">2 Bars</option>
+      <option value="64">4 Bars</option>
+    </select></label>
+  </div>
+  <div class="cbSec" id="masterGroup" title="Main-kæden: DJ-filter og volumen">
     <label class="wide">MASTER FLT <input type="range" id="mFilter" min="0" max="1" step="0.005" value="0.5"><span id="mFilterVal">—</span></label>
     <label>VOL <input type="range" id="mVol" min="0" max="1" step="0.01" value="0.9"></label>
   </div>
-  <input id="projName" placeholder="uden titel" maxlength="40" spellcheck="false">
-  <button id="saveProj" title="Gem projekt i biblioteket">GEM</button>
-  <button id="projMenu" title="Åbn projekt">ÅBN ▾</button>
-  <button id="exportBtn" title="Eksportér som WAV">EKSPORT</button>
+  <input id="projName" placeholder="uden titel" maxlength="40" spellcheck="false" title="Live Set-navn">
+  <button id="saveProj" title="Gem Live Set i biblioteket">SAVE</button>
+  <button id="projMenu" title="Åbn Live Set">OPEN ▾</button>
+  <button id="exportBtn" title="Export Audio: rendér som WAV">EXPORT</button>
+  <div id="viewSel" title="View Selector: Session (III) / Arrangement (≡) — Tab skifter også">
+    <button id="vSession" class="on" title="Session View — grid med clips og scener">|||</button>
+    <button id="vArr" title="Arrangement View — sangen på tidslinjen">≡</button>
+  </div>
 </header>
 
 <div id="patternBar">
-  <span id="viewLabel">JAM</span>
-  <button id="viewToggle" title="Skift mellem JAM (session-grid) og SANG (tidslinjen) — Tab">⇄ SANG-VIEW</button>
-  <span id="midiBox" title="MIDI-keyboard spiller altid det valgte spors synth"><b id="midiDot">●</b>MIDI
+  <span id="viewLabel">SESSION</span>
+  <span id="midiBox" title="MIDI-keyboard spiller altid det valgte spors lyd"><b id="midiDot">●</b>MIDI
     <button id="midiRec" title="Skriv dine tangenter kvantiseret ind i den valgte clip, mens den looper">⏺ REC</button>
-    <button id="midiCap" title="FANG (Capture): skriv det du LIGE har spillet ind i den valgte clip — virker bagudrettet">⭯ FANG</button></span>
-  <span class="barHint" id="barHint">Klik en clip = start (på næste takt) · klik tom slot = ny clip · ▶ i højre side = start hel scene</span>
+    <button id="midiCap" title="Capture MIDI: skriv det du LIGE har spillet ind i den valgte clip — virker bagudrettet">⭯ CAPTURE</button></span>
+  <span class="barHint" id="barHint">Klik ▶ på en clip = launch (kvantiseret) · klik navnet = vælg · dobbeltklik tom slot = ny clip · ▶ i Main-kolonnen = launch hel scene</span>
   <div id="songRow">
     <div id="songChain"></div>
-    <button id="songAdd" title="Læg den valgte scenes clips ind bagest i sangen (4 takter)">+ SCENE→SANG</button>
-    <button id="songLoopBtn" class="on" title="Loop sangen">∞</button>
-    <button id="jamBtn" title="Optag din jam (clip- og scene-skift) som sang på tidslinjen">● OPTAG JAM→SANG</button>
+    <button id="songAdd" title="Læg den valgte scenes clips ind bagest i Arrangementet (4 takter)">+ SCENE→ARR</button>
+    <button id="songLoopBtn" class="on" title="Arrangement Loop">∞</button>
+    <button id="jamBtn" title="Optag din session-jam (clip- og scene-skift) som Arrangement på tidslinjen">● SESSION→ARR REC</button>
   </div>
 </div>
 
@@ -51,29 +71,86 @@
 </main>
 <main id="arr" hidden></main>
 
+<!-- DETAIL VIEW: Clip View (øverst) + Device View (nederst) -->
 <footer id="soundPanel">
   <div id="clipBar" hidden>
-    <div id="cbHead">
-      <span id="cbTitle">CLIP</span>
+    <div id="clipTitleBar">
+      <input type="checkbox" id="clipActBox" checked title="Clip Activator — slå clip'en til/fra (tast 0)">
       <input id="cbName" maxlength="14" spellcheck="false" title="Clip-navn">
-      <button id="cbLen" title="Clip-længde: 1 eller 2 takter">16</button>
-      <span id="tlenBox" title="Polymeter: clip'ens egen loop-længde i steps">POLY <button id="tlenDec">−</button><b id="tlenVal">16</b><button id="tlenInc">+</button></span>
-      <button id="cbX2" title="×2: kopiér indholdet og gør clip'en dobbelt så lang (som i Live)">×2</button>
-      <button id="cbRev" title="Spejlvend rækkefølgen">REV</button>
-      <button id="cbDup" title="Duplikér clip'en til slotten nedenunder (cmd+D)">DUP</button>
-      <button id="cbTools" title="Værktøjer: euclid, rotér, spejl, tilfældig, ryd">🎲</button>
-      <span class="cbSpacer"></span>
-      <button id="rollFoldB" title="FOLD: vis kun rækker med toner (som i Ableton)">FOLD</button>
-      <button id="rollUp" title="Rul tonevinduet op (højere toner)">▲</button>
-      <button id="rollDown" title="Rul tonevinduet ned (dybere toner)">▼</button>
+      <span id="clipTitleInfo"></span>
     </div>
-    <div id="clipRoll">
-      <div id="rollLabels"></div>
-      <div id="clipSteps" title="Piano-rullen — redigér mens den looper! Klik = tænd/sluk tone (flere toner oven på hinanden = akkord) · shift = blødt · alt = chance · højreklik = step-lås"></div>
-    </div>
-    <div id="velLane">
-      <span id="velLbl" title="Anslagsstyrke pr. step — træk lodret på stolperne">VEL</span>
-      <div id="velStems"></div>
+    <div id="clipMain">
+      <div id="clipPanels">
+        <div class="cvPanel" id="pnlClip">
+          <div class="cvTitle">Clip</div>
+          <div class="cvRow"><span class="cvLbl">Length</span><b id="cbLen" title="Looplængde i steps (16 = 1 takt)">16</b>
+            <button id="cbX2" class="pill" title="×2: kopiér indholdet og fordobl længden (Duplicate Loop)">×2</button>
+            <button id="cbHalf" class="pill" title="/2: halvér længden">/2</button></div>
+          <div class="cvRow"><button id="loopTog" class="tog on" title="Loop: til = looper for evigt · fra = spiller én gang og stopper (one-shot)">⟲ Loop</button></div>
+          <div class="cvRow"><span class="cvLbl" title="Polymeter: clip'ens egen loop-længde i steps (Signature)">Poly</span>
+            <span id="tlenBox"><button id="tlenDec">−</button><b id="tlenVal">16</b><button id="tlenInc">+</button></span></div>
+          <div class="cvRow">
+            <button id="cbDup" class="pill" title="Duplicate: kopiér clip'en til slotten nedenunder (cmd+D)">Duplicate</button>
+            <button id="cbRev" class="pill" title="Reverse: spejlvend rækkefølgen">Reverse</button></div>
+          <div class="cvRow"><button id="cbTools" class="pill" title="Værktøjer: Euclid, rotér, tilfældig, ryd locks, ryd">Tools ▾</button></div>
+        </div>
+        <div class="cvPanel" id="pnlLaunch">
+          <div class="cvTitle">Launch</div>
+          <button id="faTog" class="tog wideTog" title="Follow Action: clip'en gør selv noget efter et antal gennemløb">Follow Action</button>
+          <div class="cvRow faAB">
+            <select id="faA" title="Follow Action A"></select>
+            <select id="faB" title="Follow Action B"></select>
+          </div>
+          <div class="cvRow faChance">
+            <span id="caAVal">100%</span>
+            <input type="range" id="caSlider" min="0" max="100" step="5" value="100" title="Chance: fordelingen mellem action A og B">
+            <span id="caBVal">0%</span>
+          </div>
+          <div class="cvRow">
+            <span class="cvLbl">efter</span>
+            <span id="faMultBox"><button id="faMultDec">−</button><b id="faMultVal">1</b><button id="faMultInc">+</button></span>
+            <span class="cvLbl">× loop</span>
+          </div>
+          <div class="cvRow"><span class="cvLbl">Mode</span>
+            <select id="lmSel" title="Launch Mode: Trigger = klik genstarter · Toggle = klik på spillende clip stopper den">
+              <option value="trigger">Trigger</option>
+              <option value="toggle">Toggle</option>
+            </select></div>
+          <div class="cvRow"><span class="cvLbl">Quantize</span>
+            <select id="clipQSel" title="Clip Launch Quantization: overstyrer den globale Q for denne clip">
+              <option value="">Global</option>
+              <option value="0">None</option>
+              <option value="4">1/4</option>
+              <option value="8">1/2</option>
+              <option value="16">1 Bar</option>
+              <option value="32">2 Bars</option>
+            </select></div>
+        </div>
+      </div>
+      <div id="clipEditor">
+        <div id="edToolbar">
+          <button id="rollFoldB" title="Fold: vis kun rækker med toner (tast F)">Fold</button>
+          <button id="hlScaleB" title="Highlight Scale: fremhæv dur-skalaens rækker fra sporets grundtone (tast K)">Scale</button>
+          <button id="rollUp" title="Rul tonevinduet op (højere toner)">▲</button>
+          <button id="rollDown" title="Rul tonevinduet ned (dybere toner)">▼</button>
+          <span class="edTabs"><b class="on">Notes</b><b class="off" title="Envelopes — kommer senere">Envelopes</b></span>
+          <span id="gridLbl" title="Grid: 1/16 (steps)">1/16 ▾</span>
+        </div>
+        <div id="edRulerRow"><span class="edCorner"></span><div id="edRuler"></div></div>
+        <div id="clipRoll">
+          <div id="pianoCol"></div>
+          <div id="clipSteps" title="MIDI Note Editor — redigér mens den looper! Klik = tænd/sluk tone (flere i samme kolonne = akkord) · shift = blød · højreklik = step-lås"></div>
+        </div>
+        <div id="velLane">
+          <span id="laneHead"><select id="laneSel" title="Lane Selector: Velocity eller Chance"><option value="vel">Vel</option><option value="chance">Chance</option></select><i id="laneScale">127<br>64<br>1</i></span>
+          <div id="velStems"></div>
+        </div>
+        <div id="laneCtl">
+          <button id="laneRnd" class="pill" title="Randomize: tilfældig variation af banens værdier">Randomize</button>
+          <input type="number" id="laneRndAmt" min="5" max="100" step="5" value="25" title="Randomization Amount (%)">
+          <span id="laneCtlInfo"></span>
+        </div>
+      </div>
     </div>
   </div>
   <div id="spHead">
@@ -84,9 +161,10 @@
   <div id="params"></div>
 </footer>
 
+<div id="infoView" title=""><b id="ivTitle">Info View</b><span id="ivText">Peg på en knap for at få hjælp her — som i Ableton Live.</span></div>
 <div id="toast" hidden></div>
-<div id="projList" hidden><div id="projBox"><div id="projHead">PROJEKTER <button id="projClose">✕</button></div><div id="projItems"></div></div></div>
+<div id="projList" hidden><div id="projBox"><div id="projHead">LIVE SETS <button id="projClose">✕</button></div><div id="projItems"></div></div></div>
 
-<script type="module" src="app.js?v=15"></script>
+<script type="module" src="app.js?v=16"></script>
 </body>
 </html>

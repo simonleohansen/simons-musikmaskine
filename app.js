@@ -2,12 +2,12 @@
 // JAM (Session View): spor = kolonner, clips = launchbare celler, scener = rækker.
 // Ét klik = start (kvantiseret til næste takt, blinker i kø). Clips redigeres MENS de looper.
 // SANG (Arrangement): frie clips på tidslinjen. Tab skifter view; det du ser, er det du hører.
-import { Player, renderWav, noteName, stepNotes, cutHz, songEntry, entrySteps, emptyArr, arrLenSteps, tempoAt, songDurationSec, BAR, recBuffers, registerRecBuffer, encodeWav, liveOf, clipLen, sampleBuffers, loadSample, preloadSamples } from './engine.js?v=15';
+import { Player, renderWav, noteName, NOTE_NAMES, stepNotes, faOf, clipQuant, cutHz, songEntry, entrySteps, emptyArr, arrLenSteps, tempoAt, songDurationSec, BAR, recBuffers, registerRecBuffer, encodeWav, liveOf, clipLen, sampleBuffers, loadSample, preloadSamples } from './engine.js?v=16';
 
-const APP_VER = 'v15';
+const APP_VER = 'v16';
 const $ = id => document.getElementById(id);
 const PATTERN_NAMES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-const TRACK_COLORS = ['#ff3d5a', '#ff9f2e', '#ffd83d', '#c8ff2e', '#3dffc0', '#3db9ff', '#a06bff', '#ff5ad0'];
+const TRACK_COLORS = ['#e58f8f', '#edc897', '#fffd9e', '#c9ffb7', '#91e4db', '#98c5e7', '#e6ddf1', '#d296bf'];
 const MAX_STEPS = 32;
 
 // ---------- patch-parametre (definitionen driver hele panelet) ----------
@@ -63,23 +63,23 @@ function patch(over) {
     pan: 0, duck: 0, choke: 0, sendD: 0, sendV: 0, ...over };
 }
 const PRESETS = [
-  { n: 'KICK', c: 'TROMMER', p: patch({ wave: 'sin', note: 36, penv: 30, pdec: 0.055, dec: 0.34, drive: 0.55, cut: 0.85 }) },
-  { n: 'KICK RUMBLE', c: 'TROMMER', p: patch({ wave: 'sin', note: 34, penv: 26, pdec: 0.07, dec: 0.6, drive: 0.75, cut: 0.5, sendV: 0.25 }) },
-  { n: 'CLAP', c: 'TROMMER', p: patch({ wave: 'noise', dec: 0.22, ftype: 'bp', cut: 0.68, res: 0.35, att: 0.008, sendV: 0.18 }) },
-  { n: 'SNARE', c: 'TROMMER', p: patch({ wave: 'noise', note: 55, noise: 1, dec: 0.16, cut: 0.75, penv: 10, pdec: 0.05 }) },
-  { n: 'HAT C', c: 'TROMMER', p: patch({ wave: 'noise', dec: 0.05, ftype: 'hp', cut: 0.8, res: 0.2, choke: 1 }) },
-  { n: 'HAT O', c: 'TROMMER', p: patch({ wave: 'noise', dec: 0.32, ftype: 'hp', cut: 0.78, res: 0.2, choke: 1 }) },
-  { n: 'RIDE', c: 'TROMMER', p: patch({ wave: 'noise', dec: 0.5, ftype: 'hp', cut: 0.85, res: 0.55, sendV: 0.12 }) },
-  { n: '303 BASS', c: 'BAS', p: patch({ wave: 'saw', note: 36, glide: 0.35, dec: 0.24, cut: 0.3, res: 0.62, fenv: 0.5, fdec: 0.18, drive: 0.3, duck: 0.45 }) },
-  { n: 'SUB BASS', c: 'BAS', p: patch({ wave: 'sin', note: 33, sub: 0.6, dec: 0.4, cut: 0.5, duck: 0.5 }) },
+  { n: 'KICK', c: 'DRUMS', p: patch({ wave: 'sin', note: 36, penv: 30, pdec: 0.055, dec: 0.34, drive: 0.55, cut: 0.85 }) },
+  { n: 'KICK RUMBLE', c: 'DRUMS', p: patch({ wave: 'sin', note: 34, penv: 26, pdec: 0.07, dec: 0.6, drive: 0.75, cut: 0.5, sendV: 0.25 }) },
+  { n: 'CLAP', c: 'DRUMS', p: patch({ wave: 'noise', dec: 0.22, ftype: 'bp', cut: 0.68, res: 0.35, att: 0.008, sendV: 0.18 }) },
+  { n: 'SNARE', c: 'DRUMS', p: patch({ wave: 'noise', note: 55, noise: 1, dec: 0.16, cut: 0.75, penv: 10, pdec: 0.05 }) },
+  { n: 'HAT C', c: 'DRUMS', p: patch({ wave: 'noise', dec: 0.05, ftype: 'hp', cut: 0.8, res: 0.2, choke: 1 }) },
+  { n: 'HAT O', c: 'DRUMS', p: patch({ wave: 'noise', dec: 0.32, ftype: 'hp', cut: 0.78, res: 0.2, choke: 1 }) },
+  { n: 'RIDE', c: 'DRUMS', p: patch({ wave: 'noise', dec: 0.5, ftype: 'hp', cut: 0.85, res: 0.55, sendV: 0.12 }) },
+  { n: '303 BASS', c: 'BASS', p: patch({ wave: 'saw', note: 36, glide: 0.35, dec: 0.24, cut: 0.3, res: 0.62, fenv: 0.5, fdec: 0.18, drive: 0.3, duck: 0.45 }) },
+  { n: 'SUB BASS', c: 'BASS', p: patch({ wave: 'sin', note: 33, sub: 0.6, dec: 0.4, cut: 0.5, duck: 0.5 }) },
   { n: 'RAVE STAB', c: 'SYNTH', p: patch({ wave: 'saw', note: 60, wave2: 'saw', semi2: 12, det2: 14, mix2: 0.6, dec: 0.22, cut: 0.6, res: 0.3, fenv: 0.45, fdec: 0.12, sendD: 0.35, sendV: 0.2, duck: 0.35 }) },
   { n: 'HOOVER', c: 'SYNTH', p: patch({ wave: 'saw', note: 48, wave2: 'saw', semi2: 0, det2: 22, mix2: 1, sub: 0.35, drift: 0.4, sus: 0.6, rel: 0.3, gate: 2, dec: 0.15, cut: 0.5, res: 0.2, drive: 0.25, duck: 0.4 }) },
   { n: 'DUB STAB', c: 'SYNTH', p: patch({ wave: 'sqr', note: 57, wave2: 'sqr', semi2: 7, mix2: 0.5, dec: 0.28, cut: 0.42, res: 0.3, sendD: 0.55, sendV: 0.25, duck: 0.35 }) },
   { n: 'ACID LEAD', c: 'SYNTH', p: patch({ wave: 'sqr', note: 60, glide: 0.25, dec: 0.18, cut: 0.35, res: 0.7, fenv: 0.6, fdec: 0.1, sendD: 0.4 }) },
   { n: 'BLEEP', c: 'SYNTH', p: patch({ wave: 'sin', note: 84, dec: 0.09, sendD: 0.5 }) },
-  { n: 'PERC', c: 'TROMMER', p: patch({ wave: 'tri', note: 74, penv: 14, pdec: 0.03, dec: 0.09, sendD: 0.3 }) },
+  { n: 'PERC', c: 'DRUMS', p: patch({ wave: 'tri', note: 74, penv: 14, pdec: 0.03, dec: 0.09, sendD: 0.3 }) },
   { n: 'ZAP', c: 'FX', p: patch({ wave: 'saw', note: 70, penv: 36, pdec: 0.09, dec: 0.12, drive: 0.4 }) },
-  { n: 'LOFI PERC', c: 'TROMMER', p: patch({ wave: 'tri', note: 65, penv: 10, pdec: 0.04, dec: 0.12, crush: 0.55, down: 0.4, sendD: 0.3 }) },
+  { n: 'LOFI PERC', c: 'DRUMS', p: patch({ wave: 'tri', note: 65, penv: 10, pdec: 0.04, dec: 0.12, crush: 0.55, down: 0.4, sendD: 0.3 }) },
   { n: 'NOISE SWEEP', c: 'FX', p: patch({ wave: 'noise', att: 0.25, dec: 1.3, ftype: 'bp', cut: 0.55, res: 0.5, fenv: 0.8, fdec: 1.1, sendV: 0.45, duck: 0.3 }) },
   { n: 'DRONE', c: 'FX', p: patch({ wave: 'saw', note: 36, sub: 0.4, drift: 0.3, att: 0.1, dec: 1.5, sus: 0.7, rel: 0.8, gate: 4, cut: 0.35, res: 0.4, lamt: 0.5, lrate: 0.8, ldst: 'cut', sendV: 0.3, duck: 0.5 }) },
 ];
@@ -358,8 +358,8 @@ function renderBrowser() {
     return box;
   };
   // LYDE: klik = hoer paa valgt spor · dobbeltklik = indlaes · traek til en spor-kolonne
-  const sounds = sec('SYNTHS', 'Lyde maskinen SELV laver (indstillinger til synthen — kan skrues på bagefter). Klik: hør · dobbeltklik: læg på valgt spor · træk til et spor');
-  ['TROMMER', 'BAS', 'SYNTH', 'FX'].forEach(cat => {
+  const sounds = sec('SOUNDS', 'Lyde maskinen SELV laver (indstillinger til synthen — kan skrues på bagefter). Klik: hør · dobbeltklik: læg på valgt spor · træk til et spor');
+  ['DRUMS', 'BASS', 'SYNTH', 'FX'].forEach(cat => {
   const ch = document.createElement('div');
   ch.className = 'brCat';
   ch.textContent = cat;
@@ -496,7 +496,7 @@ function renderBrowser() {
     clipsBox.appendChild(d);
   }
   // OPTAGELSER: klik = hoer · dobbeltklik = laeg i sangen ved startmarkoeren
-  const recsBox = sec('🎙 OPTAGELSER', 'Dine stemme-optagelser — klik: hør · dobbeltklik: læg som audio-clip i sangen');
+  const recsBox = sec('🎙 RECORDINGS', 'Dine stemme-optagelser — klik: hør · dobbeltklik: læg som audio-clip i sangen');
   const recIds = [...recBuffers.keys()];
   if (!recIds.length) {
     const d = document.createElement('div');
@@ -546,8 +546,11 @@ function launchClip(sceneIdx, tr) {
   if (!id) return;
   selectClip(id, tr, sceneIdx);
   const L = live()[tr];
+  const c = st.clips[id];
   if (player.playing && st.mode === 'jam') {
-    L.next = id;                 // koe → blink → starter paa naeste takt
+    // Launch Mode (Live): Toggle = klik paa spillende clip stopper den
+    if (c && c.lm === 'toggle' && L.play === id && L.next === undefined) L.next = 'stop';
+    else L.next = id;            // koe → blink → starter ved kvantiseringspunktet
   } else {
     L.play = id; L.at = 0; L.next = undefined;
     st.mode = 'jam';
@@ -564,6 +567,7 @@ function stopTrack(tr) {
 function launchScene(i) {
   selScene = i;
   const sc = st.session.scenes[i];
+  if (sc.bpm) { st.bpm = sc.bpm; $('bpm').value = sc.bpm; persist(); }
   const playing = player.playing && st.mode === 'jam';
   sc.slots.forEach((id, tr) => {
     const L = live()[tr];
@@ -673,6 +677,15 @@ function sceneMenu(ev, i) {
       const nm = prompt('Scene-navn (fx INTRO, DROP):', st.session.scenes[i].name);
       if (nm != null) { st.session.scenes[i].name = nm.trim().toUpperCase().slice(0, 10); persist(); renderSession(); }
     }],
+    ['♩ SCENE TEMPO…', () => {
+      const cur = st.session.scenes[i].bpm || '';
+      const v = prompt('Scene Tempo (BPM, tom = ingen ændring ved launch):', cur);
+      if (v == null) return;
+      const n = parseInt(v, 10);
+      if (!v.trim() || !n) delete st.session.scenes[i].bpm;
+      else st.session.scenes[i].bpm = Math.max(60, Math.min(200, n));
+      persist(); renderSession();
+    }],
     ['◌ RYD SCENE', () => { st.session.scenes[i].slots = new Array(8).fill(null); gcClips(); persist(); renderSession(); }],
     ['✕ SLET SCENE', () => {
       if (st.session.scenes.length <= 1) return;
@@ -683,7 +696,7 @@ function sceneMenu(ev, i) {
     }],
   ]);
 }
-const CLIP_PALETTE = ['#ff3d5a', '#ff9f2e', '#ffd83d', '#c8ff2e', '#3dffc0', '#3db9ff', '#a06bff', '#ff5ad0', '#e0e0e0', '#8f8f8f'];
+const CLIP_PALETTE = ['#e58f8f', '#edc897', '#fffd9e', '#c9ffb7', '#a8fed3', '#91e4db', '#98c5e7', '#c1d1e0', '#e6ddf1', '#d296bf', '#dfc5c1', '#d9e4b7'];
 function openColorPop(ev, c) {
   closeMenus();
   const pop = document.createElement('div');
@@ -707,42 +720,11 @@ function openColorPop(ev, c) {
 // FOLLOW ACTIONS (Ableton-manualen): clip'en skifter selv efter N gennemloeb
 function openFaPop(ev, c) {
   closeMenus();
-  const pop = document.createElement('div');
-  pop.id = 'eucPop';
-  const fa = () => c.fa || { act: 'none', after: 4, chance: 1 };
-  pop.innerHTML = `<div class="eucTitle">⟳ FOLLOW ACTION · ${c.name}</div>
-    <div class="faRow" data-k="act"><span>HANDLING</span></div>
-    <div class="faRow" data-k="after"><span>EFTER</span></div>
-    <div class="faRow" data-k="chance"><span>CHANCE</span></div>
-    <div class="eucBtns"><button id="faClose">LUK</button></div>`;
-  const opts = {
-    act: [['none', 'INGEN'], ['next', 'NÆSTE ▼'], ['any', 'TILFÆLDIG'], ['first', 'FØRSTE'], ['stop', 'STOP']],
-    after: [[1, '1'], [2, '2'], [4, '4'], [8, '8']],
-    chance: [[0.25, '25%'], [0.5, '50%'], [0.75, '75%'], [1, '100%']],
-  };
-  const sync = () => {
-    for (const row of pop.querySelectorAll('.faRow')) {
-      const k = row.dataset.k;
-      row.querySelectorAll('button').forEach(b => b.remove());
-      for (const [v, lbl] of opts[k]) {
-        const b = document.createElement('button');
-        b.textContent = lbl;
-        b.className = fa()[k] === v ? 'on' : '';
-        b.onclick = () => {
-          c.fa = { ...fa(), [k]: v };
-          if (c.fa.act === 'none') delete c.fa;
-          persist(); sync(); renderSession(); renderBrowser();
-        };
-        row.appendChild(b);
-      }
-    }
-  };
-  pop.querySelector('#faClose').onclick = () => pop.remove();
-  pop.style.left = Math.min(ev.clientX, innerWidth - 300) + 'px';
-  pop.style.top = Math.min(ev.clientY, innerHeight - 220) + 'px';
-  pop.onpointerdown = e2 => e2.stopPropagation();
-  document.body.appendChild(pop);
-  sync();
+  const id = Object.keys(st.clips).find(k => st.clips[k] === c);
+  const si = st.session.scenes.findIndex(sc => sc.slots[c.tr] === id);
+  selectClip(id, c.tr, si >= 0 ? si : null);
+  const p = document.getElementById('pnlLaunch');
+  if (p) { p.classList.add('flash'); setTimeout(() => p.classList.remove('flash'), 1400); }
 }
 let slotDrag = null;
 // lille drejeknap (Live-look): traek lodret for at skrue
@@ -797,7 +779,8 @@ function renderSession() {
     col.className = 'sesCol' + (ti === curTrack ? ' sel' : '');
     const head = document.createElement('div');
     head.className = 'sesHead';
-    head.innerHTML = `<span class="hdChip" style="background:${tr.color}"></span>${tr.name}`;
+    head.innerHTML = `${ti + 1} ${tr.name}`;
+    head.style.background = tr.color;
     head.title = 'Klik: vælg sporet (lyd-panelet + MIDI) · dobbeltklik: omdøb';
     head.onclick = () => selectTrack(ti);
     head.ondblclick = () => {
@@ -821,11 +804,11 @@ function renderSession() {
         slot.classList.toggle('dis', !!c.dis);
         slot.classList.toggle('edit', selClipId === id);
         slot.style.setProperty('--cc', c.color || tr.color);
-        slot.innerHTML = `<span class="tri">${playingHere ? '▶' : '▷'}</span><span class="nm">${c.name}</span>${c.fa && c.fa.act && c.fa.act !== 'none' ? '<span class="faBadge">⟳</span>' : ''}<span class="prog"></span>`;
-        slot.title = `${c.name} — klik: start på næste takt · dobbeltklik: redigér · højreklik: menu`;
+        slot.innerHTML = `<span class="lz${faOf(c) ? ' fa' : ''}"><span class="tri">▶</span></span><span class="nm">${c.name}</span><span class="prog"></span>`;
+        slot.title = `${c.name} — klik ▶: launch (kvantiseret) · klik navnet: vælg · dobbeltklik: redigér · højreklik: menu`;
         slot.onpointerdown = ev => {
           if (ev.button !== 0) return;
-          slotDrag = { si, ti, id, x0: ev.clientX, y0: ev.clientY, moved: false, el: slot, target: null };
+          slotDrag = { si, ti, id, x0: ev.clientX, y0: ev.clientY, moved: false, el: slot, target: null, fromLZ: !!(ev.target.closest && ev.target.closest('.lz')) };
           try { slot.setPointerCapture(ev.pointerId); } catch (e2) {}
         };
         slot.onpointermove = ev => {
@@ -862,7 +845,8 @@ function renderSession() {
             renderSession();
             return;
           }
-          launchClip(si, ti);
+          if (d.fromLZ) launchClip(si, ti);
+          else selectClip(id, ti, si);
         };
         slot.onpointerup = endSlot;
         slot.onpointercancel = () => { slotDrag = null; slot.classList.remove('dragging'); };
@@ -878,6 +862,14 @@ function renderSession() {
       slot.oncontextmenu = ev => { ev.preventDefault(); selectTrack(ti); slotMenu(ev, si, ti); };
       col.appendChild(slot);
     });
+    // Track Status Field (Live): ■ + gennemløb + pie + looplængde i beats
+    const stat = document.createElement('div');
+    stat.className = 'statusField';
+    stat.dataset.ti = ti;
+    stat.title = 'Track Status: ■ stop · antal gennemløb · loop-fremdrift · looplængde i beats';
+    stat.innerHTML = '<button class="stStop">■</button><span class="stLoops"></span><span class="stPie"></span><span class="stLen"></span>';
+    stat.querySelector('.stStop').onclick = () => stopTrack(ti);
+    col.appendChild(stat);
     grid.appendChild(col);
     // ---- kolonnens mixer-del (Live-stil) ----
     const mc = document.createElement('div');
@@ -946,7 +938,7 @@ function renderSession() {
     const anyQueued = sc.slots.some((id, tr2) => id && L[tr2].next === id);
     const anyPlaying = sc.slots.some((id, tr2) => id && L[tr2].play === id) && player.playing && st.mode === 'jam';
     b.className = 'sceneBtn' + (si === selScene ? ' sel' : '') + (anyQueued ? ' queued' : '') + (anyPlaying ? ' playing' : '');
-    b.innerHTML = `<span class="tri">▶</span><span class="nm">${sc.name}</span>`;
+    b.innerHTML = `<span class="tri">▶</span><span class="nm">${sc.name}</span>${sc.bpm ? `<span class="scBpm">${sc.bpm}</span>` : ''}<span class="scNum">${si + 1}</span>`;
     b.title = `Start scenen "${sc.name}" (tast ${si + 1}) · dobbeltklik: omdøb · højreklik: menu`;
     b.onclick = () => launchScene(si);
     b.ondblclick = () => {
@@ -956,34 +948,46 @@ function renderSession() {
     b.oncontextmenu = ev => { ev.preventDefault(); sceneMenu(ev, si); };
     main.appendChild(b);
   });
+  // Main-sporets Status field: Stop All Clips + Back to Arrangement (orange)
+  const mstat = document.createElement('div');
+  mstat.className = 'statusField main';
+  mstat.innerHTML = '<button class="stStop" title="Stop All Clips — stopper alle spor (kvantiseret)">■</button><button class="b2a" title="Back to Arrangement: skift til Arrangementet og spil sangen videre">▶≡</button>';
+  mstat.querySelector('.stStop').onclick = stopAll;
+  const b2a = mstat.querySelector('.b2a');
+  b2a.classList.toggle('on', st.mode === 'jam' && st.arr.clips.length > 0);
+  b2a.onclick = () => {
+    if (!st.arr.clips.length) { toast('Arrangementet er tomt — optag med ● SESSION→ARR REC eller + SCENE→ARR'); return; }
+    toggleView('arr');
+  };
+  main.appendChild(mstat);
   grid.appendChild(main);
   const mainMix = document.createElement('div');
   mainMix.className = 'mixCol main';
-  const stopAllB = document.createElement('button');
-  stopAllB.className = 'mxStop all';
-  stopAllB.textContent = '■ STOP ALLE';
-  stopAllB.onclick = stopAll;
+  const mainLbl = document.createElement('div');
+  mainLbl.className = 'mainLbl';
+  mainLbl.textContent = 'Main';
   const addB = document.createElement('button');
   addB.className = 'sceneAdd';
   addB.textContent = '+ SCENE';
   addB.onclick = () => { addScene(); renderSession(); };
-  mainMix.append(stopAllB, addB);
+  mainMix.append(mainLbl, addB);
   mixer.appendChild(mainMix);
   el.appendChild(grid);
   el.appendChild(mixer);
   renderBrowser();
 }
 
-// ---------- CLIP-EDITOR (piano-rulle som i Live — redigér mens den looper) ----------
+// ---------- CLIP VIEW (Live 12: Clip Title Bar + paneler + MIDI Note Editor) ----------
 function curClip() { return selClipId ? st.clips[selClipId] : null; }
 const PROB_CYCLE = { 1: 0.75, 0.75: 0.5, 0.5: 0.25, 0.25: 1 };
-const PROB_CHAR = p => (p >= 0.75 ? '\u00be' : p >= 0.5 ? '\u00bd' : '\u00bc');
 const COND_TAG = { fill: 'F', '!fill': '!F' };
 let velDrag = null, suppressClick = false;
-let rollFold = false;
-const rollTops = {}; // pr. clip: oeverste tone-offset i rullen
+let rollFold = false, hlScale = false, laneMode = 'vel';
+const rollTops = {};
 const ROLL_ROWS = 8;
+const MAJOR = [0, 2, 4, 5, 7, 9, 11];
 const notesOf = stp => (stp?.on ? stepNotes(stp) : []);
+const FA_OPTS = [['none', 'No Action'], ['stop', 'Stop'], ['again', 'Play Again'], ['prev', 'Previous'], ['next', 'Next'], ['first', 'First'], ['last', 'Last'], ['any', 'Any'], ['other', 'Other']];
 function setStepNotesOn(c, s, set, soft) {
   if (!set.length) {
     c.steps[s] = null;
@@ -1010,51 +1014,100 @@ function rollRows(c) {
   for (let i = 0; i < ROLL_ROWS; i++) rows.push(top - i);
   return rows;
 }
+function isBlackKey(m) { return NOTE_NAMES[((m % 12) + 12) % 12].includes('#'); }
+function inMajor(off) { return MAJOR.includes(((off % 12) + 12) % 12); }
+// follow action i normaliseret ny form (gamle {act,after,chance} migreres via faOf)
+function faObj(c) {
+  const f = faOf(c);
+  if (!f) return { on: false, a: 'next', b: 'none', ca: 1, mult: 1 };
+  return { on: f.on !== false, a: f.a || 'next', b: f.b || 'none', ca: f.ca ?? 1, mult: f.mult || 1 };
+}
 function renderClipEditor() {
   const bar = $('clipBar');
   const c = curClip();
   bar.hidden = !c;
   if (!c) return;
-  $('cbTitle').textContent = 'CLIP';
-  $('cbTitle').style.color = st.tracks[c.tr].color;
+  const col = c.color || st.tracks[c.tr].color;
+  // Clip Title Bar (i clip-farven, som i Live)
+  $('clipTitleBar').style.background = col;
+  $('clipActBox').checked = !c.dis;
   if (document.activeElement !== $('cbName')) $('cbName').value = c.name;
+  $('clipTitleInfo').textContent = String(c.tr + 1).padStart(2, '0') + ' · ' + st.tracks[c.tr].name;
+  // Clip-panel
   $('cbLen').textContent = c.len;
   $('tlenVal').textContent = clipLen(c);
   $('tlenBox').classList.toggle('custom', !!(c.tlen && c.tlen !== c.len));
+  $('loopTog').classList.toggle('on', !c.loopOff);
+  // Launch-panel
+  const fa = faObj(c);
+  if (!$('faA').options.length) {
+    for (const [v, l] of FA_OPTS) { $('faA').add(new Option(l, v)); $('faB').add(new Option(l, v)); }
+  }
+  $('faTog').classList.toggle('on', fa.on);
+  $('pnlLaunch').classList.toggle('faOff', !fa.on);
+  $('faA').value = fa.a; $('faB').value = fa.b;
+  $('caSlider').value = Math.round(fa.ca * 100);
+  $('caAVal').textContent = Math.round(fa.ca * 100) + '%';
+  $('caBVal').textContent = Math.round((1 - fa.ca) * 100) + '%';
+  $('faMultVal').textContent = fa.mult;
+  $('lmSel').value = c.lm || 'trigger';
+  $('clipQSel').value = (c.q === undefined || c.q === null) ? '' : String(c.q);
   $('rollFoldB').classList.toggle('on', rollFold);
-  const holder = $('clipSteps');
-  const labels = $('rollLabels');
-  const stems = $('velStems');
-  holder.innerHTML = ''; labels.innerHTML = ''; stems.innerHTML = '';
+  $('hlScaleB').classList.toggle('on', hlScale);
+  // MIDI Note Editor
+  const holder = $('clipSteps'), piano = $('pianoCol'), stems = $('velStems'), ruler = $('edRuler');
+  holder.innerHTML = ''; piano.innerHTML = ''; stems.innerHTML = ''; ruler.innerHTML = '';
   const L = clipLen(c);
-  const col = st.tracks[c.tr].color;
   const baseNote = st.tracks[c.tr].patch.note ?? 48;
   const rows = rollRows(c);
   holder.style.gridTemplateColumns = `repeat(${L}, 1fr)`;
   holder.style.gridTemplateRows = `repeat(${rows.length}, 1fr)`;
-  labels.style.gridTemplateRows = `repeat(${rows.length}, 1fr)`;
+  piano.style.gridTemplateRows = `repeat(${rows.length}, 1fr)`;
   stems.style.gridTemplateColumns = `repeat(${L}, 1fr)`;
-  for (const off of rows) {
-    const lb = document.createElement('div');
-    lb.className = 'rollLbl' + (off === 0 ? ' root' : '');
-    lb.textContent = noteName(baseNote + off);
-    lb.title = off === 0 ? 'Sporets grundtone' : (off > 0 ? '+' + off : '' + off) + ' halvtoner';
-    labels.appendChild(lb);
+  ruler.style.gridTemplateColumns = `repeat(${L}, 1fr)`;
+  // beat-time ruler + loop brace i clip-farven
+  const brace = document.createElement('div');
+  brace.id = 'loopBrace';
+  brace.style.background = c.loopOff ? '#a2a4aa' : col;
+  brace.title = c.loopOff ? "Loop er slaaet fra — clip'en spiller een gang (one-shot)" : "Loop Brace — clip'en looper hele laengden";
+  brace.innerHTML = '<i class="lb0">▶</i><i class="lb1">◀</i>';
+  ruler.appendChild(brace);
+  for (let s = 0; s < L; s += 4) {
+    const lb = document.createElement('span');
+    lb.className = 'rulTick';
+    lb.style.gridColumn = String(s + 1);
+    const bar2 = Math.floor(s / BAR) + 1, beat = Math.floor((s % BAR) / 4) + 1;
+    lb.textContent = beat === 1 ? String(bar2) : bar2 + '.' + beat;
+    ruler.appendChild(lb);
   }
+  // piano ruler (tegnet klaviatur)
   for (const off of rows) {
+    const m = baseNote + off;
+    const black = isBlackKey(m);
+    const k = document.createElement('div');
+    k.className = 'pKey' + (black ? ' bk' : '') + (off === 0 ? ' root' : '') + (hlScale && inMajor(off) ? ' sc' : '');
+    k.innerHTML = `<span class="pkLbl">${noteName(m)}</span>`;
+    k.title = (off === 0 ? 'Grundtone · ' : '') + noteName(m) + ' — klik: hør tonen';
+    k.onclick = () => player.audition(c.tr, { on: true, v: 0.9, n: off, l: null });
+    piano.appendChild(k);
+  }
+  // note-grid: key track-striber efter klaviaturet
+  for (const off of rows) {
+    const black = isBlackKey(baseNote + off);
     for (let s = 0; s < L; s++) {
       const step = c.steps[s];
       const on = notesOf(step).includes(off);
       const b = document.createElement('button');
-      b.className = 'stp rollCell' + (s % 4 === 0 ? ' q' : '') + (off === 0 ? ' rootRow' : '')
+      b.className = 'stp rollCell' + (black ? ' bk' : ' wk') + (s % 4 === 0 ? ' q' : '') + (off === 0 ? ' rootRow' : '')
+        + (hlScale && inMajor(off) ? ' sc' : '')
         + (on ? ' on' : '') + (on && (step.r ?? 1) > 1 ? ' r' + Math.min(4, step.r) : '')
         + (lockSel && lockSel.step === s ? ' locksel' : '');
       b.dataset.s = s;
       b.style.setProperty('--trkcol', col);
       if (on) {
-        b.style.opacity = 0.45 + 0.55 * (step.v ?? 1);
+        b.style.opacity = 0.5 + 0.5 * (step.v ?? 1);
         if (step.l) b.innerHTML += '<span class="lockdot"></span>';
-        if ((step.p ?? 1) < 1) b.innerHTML += `<span class="pTag">${PROB_CHAR(step.p)}</span>`;
+        if ((step.p ?? 1) < 1) b.innerHTML += '<span class="chTri"></span>';
         if (step.c) b.innerHTML += `<span class="condTag">${COND_TAG[step.c] || step.c}</span>`;
       }
       b.onclick = e => {
@@ -1079,22 +1132,29 @@ function renderClipEditor() {
       holder.appendChild(b);
     }
   }
-  // velocity-bane (som i Live): traek lodret paa en stolpe
+  // Velocity/Chance-lane som lollipops (Live-model)
+  $('laneSel').value = laneMode;
+  $('laneScale').innerHTML = laneMode === 'vel' ? '127<br>64<br>1' : '100<br>50<br>0';
+  $('laneCtlInfo').textContent = laneMode === 'vel'
+    ? 'Velocity: anslagsstyrke pr. step — traek lodret paa en lollipop'
+    : 'Chance: sandsynlighed for at steppet spiller (< 100% = trekant paa noden)';
   for (let s = 0; s < L; s++) {
     const step = c.steps[s];
+    const on = !!step?.on;
+    const v = laneMode === 'vel' ? (step?.v ?? 1) : (step?.p ?? 1);
     const stem = document.createElement('div');
-    stem.className = 'velStem' + (s % 4 === 0 ? ' q' : '') + (step?.on ? '' : ' off');
+    stem.className = 'velStem' + (s % 4 === 0 ? ' q' : '') + (on ? '' : ' off') + (laneMode === 'chance' ? ' ch' : '');
     stem.dataset.s = s;
     stem.style.setProperty('--trkcol', col);
-    stem.innerHTML = `<div class="vf" style="height:${Math.round((step?.v ?? 1) * 100)}%"></div>`;
-    stem.title = 'Velocity (anslagsstyrke) — traek lodret';
+    stem.innerHTML = `<div class="vstalk" style="height:${Math.round(v * 82)}%"></div><div class="vhead" style="bottom:${Math.round(v * 82)}%"></div>`;
+    stem.title = laneMode === 'vel' ? 'Velocity — traek lodret' : 'Chance — traek lodret';
     stem.onpointerdown = e => {
       if (!c.steps[s]?.on) return;
       velDrag = { s, el: stem };
       try { stem.setPointerCapture(e.pointerId); } catch (err) {}
-      dragVel(e, stem, c, s);
+      dragLane(e, stem, c, s);
     };
-    stem.onpointermove = e => { if (velDrag?.el === stem) dragVel(e, stem, c, s); };
+    stem.onpointermove = e => { if (velDrag?.el === stem) dragLane(e, stem, c, s); };
     const end = () => {
       if (velDrag?.el === stem) { velDrag = null; persist(); renderClipEditor(); if (lockSel) renderPanel(); }
     };
@@ -1103,16 +1163,64 @@ function renderClipEditor() {
     stems.appendChild(stem);
   }
 }
-function dragVel(e, stem, c, s) {
+function dragLane(e, stem, c, s) {
   const r = stem.getBoundingClientRect();
   const v = Math.max(0.05, Math.min(1, 1 - (e.clientY - r.top) / r.height));
   const stp = c.steps[s];
   if (!stp) return;
-  stp.v = Math.round(v * 100) / 100;
-  stem.querySelector('.vf').style.height = Math.round(v * 100) + '%';
-  document.querySelectorAll(`#clipSteps .rollCell.on[data-s="${s}"]`).forEach(x => { x.style.opacity = 0.45 + 0.55 * v; });
+  const val = Math.round(v * 100) / 100;
+  if (laneMode === 'vel') {
+    stp.v = val;
+    document.querySelectorAll(`#clipSteps .rollCell.on[data-s="${s}"]`).forEach(x => { x.style.opacity = 0.5 + 0.5 * val; });
+  } else {
+    if (val >= 0.98) delete stp.p; else stp.p = val;
+  }
+  stem.querySelector('.vstalk').style.height = Math.round(val * 82) + '%';
+  stem.querySelector('.vhead').style.bottom = Math.round(val * 82) + '%';
 }
+// ---- Clip View-kontroller ----
+function writeFa(mut) {
+  const c = curClip();
+  if (!c) return;
+  const f = faObj(c);
+  mut(f);
+  if (!f.on && f.a === 'next' && f.b === 'none' && f.ca === 1 && f.mult === 1) delete c.fa;
+  else c.fa = f;
+  persist(); renderClipEditor(); renderSession();
+}
+$('clipActBox').onchange = () => {
+  const c = curClip();
+  if (!c) return;
+  if ($('clipActBox').checked) delete c.dis; else c.dis = true;
+  persist(); renderSession(); renderClipEditor();
+};
+$('loopTog').onclick = () => {
+  const c = curClip();
+  if (!c) return;
+  if (c.loopOff) delete c.loopOff; else c.loopOff = true;
+  persist(); renderClipEditor();
+};
+$('faTog').onclick = () => writeFa(f => { f.on = !f.on; });
+$('faA').onchange = () => writeFa(f => { f.a = $('faA').value; f.on = true; });
+$('faB').onchange = () => writeFa(f => { f.b = $('faB').value; f.on = true; });
+$('caSlider').oninput = () => writeFa(f => { f.ca = (+$('caSlider').value) / 100; });
+$('faMultDec').onclick = () => writeFa(f => { f.mult = Math.max(1, (f.mult || 1) - 1); });
+$('faMultInc').onclick = () => writeFa(f => { f.mult = Math.min(16, (f.mult || 1) + 1); });
+$('lmSel').onchange = () => {
+  const c = curClip();
+  if (!c) return;
+  if ($('lmSel').value === 'trigger') delete c.lm; else c.lm = $('lmSel').value;
+  persist();
+};
+$('clipQSel').onchange = () => {
+  const c = curClip();
+  if (!c) return;
+  const v = $('clipQSel').value;
+  if (v === '') delete c.q; else c.q = +v;
+  persist();
+};
 $('rollFoldB').onclick = () => { rollFold = !rollFold; renderClipEditor(); };
+$('hlScaleB').onclick = () => { hlScale = !hlScale; renderClipEditor(); };
 $('rollUp').onclick = () => rollNudge(1);
 $('rollDown').onclick = () => rollNudge(-1);
 function rollNudge(d) {
@@ -1125,11 +1233,20 @@ $('cbX2').onclick = () => {
   const c = curClip();
   if (!c) return;
   if (c.len >= 32) { toast("Clip'en er allerede 2 takter (max)", true); return; }
-  for (let i = 0; i < 16; i++) c.steps[16 + i] = c.steps[i] ? JSON.parse(JSON.stringify(c.steps[i])) : null;
-  c.len = 32;
-  if (c.tlen && c.tlen <= 16) c.tlen = null;
+  const half = c.len;
+  for (let i = 0; i < half && half + i < MAX_STEPS; i++) c.steps[half + i] = c.steps[i] ? JSON.parse(JSON.stringify(c.steps[i])) : null;
+  c.len = Math.min(32, half * 2);
+  if (c.tlen && c.tlen <= half) c.tlen = null;
   persist(); renderClipEditor(); renderSession();
-  toast('\u00d72: indholdet kopieret til takt 2 \u2014 lav nu en variation dér');
+  toast('×2: indholdet kopieret — lav nu en variation i den nye halvdel');
+};
+$('cbHalf').onclick = () => {
+  const c = curClip();
+  if (!c) return;
+  if (c.len <= 4) { toast('Minimum 4 steps', true); return; }
+  c.len = Math.max(4, Math.floor(c.len / 2));
+  if (c.tlen && c.tlen > c.len) c.tlen = null;
+  persist(); renderClipEditor(); renderSession();
 };
 $('cbRev').onclick = () => {
   const c = curClip();
@@ -1145,18 +1262,29 @@ $('cbDup').onclick = () => {
   const si = st.session.scenes.findIndex(sc => sc.slots[c.tr] === selClipId);
   if (si >= 0) dupClipBelow(si, c.tr);
 };
+$('laneSel').onchange = () => { laneMode = $('laneSel').value; renderClipEditor(); };
+$('laneRnd').onclick = () => {
+  const c = curClip();
+  if (!c) return;
+  const amt = (+$('laneRndAmt').value || 25) / 100;
+  const L2 = clipLen(c);
+  for (let i = 0; i < L2; i++) {
+    const stp = c.steps[i];
+    if (!stp?.on) continue;
+    if (laneMode === 'vel') stp.v = Math.max(0.05, Math.min(1, (stp.v ?? 1) + (Math.random() * 2 - 1) * amt));
+    else {
+      const p = Math.max(0.05, Math.min(1, (stp.p ?? 1) + (Math.random() * 2 - 1) * amt));
+      if (p >= 0.98) delete stp.p; else stp.p = Math.round(p * 100) / 100;
+    }
+  }
+  persist(); renderClipEditor();
+};
 $('cbName').addEventListener('input', () => {
   const c = curClip();
   if (!c) return;
   c.name = $('cbName').value.slice(0, 14);
   persist(); renderSession();
 });
-$('cbLen').onclick = () => {
-  const c = curClip();
-  if (!c) return;
-  c.len = c.len === 16 ? 32 : 16;
-  persist(); renderClipEditor(); renderSession();
-};
 $('tlenDec').onclick = () => bumpTlen(-1);
 $('tlenInc').onclick = () => bumpTlen(1);
 function bumpTlen(d) {
@@ -1365,8 +1493,9 @@ function toggleView(v) {
   curView = v || (curView === 'jam' ? 'arr' : 'jam');
   $('jam').hidden = curView !== 'jam';
   $('arr').hidden = curView !== 'arr';
-  $('viewToggle').textContent = curView === 'jam' ? '⇄ SANG-VIEW' : '⇄ JAM-VIEW';
-  $('viewLabel').textContent = curView === 'jam' ? 'JAM' : 'SANG';
+  $('vSession').classList.toggle('on', curView === 'jam');
+  $('vArr').classList.toggle('on', curView !== 'jam');
+  $('viewLabel').textContent = curView === 'jam' ? 'SESSION' : 'ARRANGEMENT';
   $('barHint').textContent = curView === 'jam'
     ? 'Klik en clip = start (på næste takt) · klik tom slot = ny clip · ▶ til højre = start hel scene · taster 1-8 = scener'
     : 'Træk clips = flyt (alt = kopiér) · kanter = længde · dobbeltklik tom bane = læg clip ind · linjal: klik = spil herfra, træk = loop';
@@ -1375,7 +1504,8 @@ function toggleView(v) {
   if (curView === 'arr') renderArr(); else renderSession();
   renderSongUI();
 }
-$('viewToggle').onclick = () => toggleView();
+$('vSession').onclick = () => toggleView('jam');
+$('vArr').onclick = () => toggleView('arr');
 function waveformURI(buf, color) {
   const d = buf.getChannelData(0);
   const cols = 160;
@@ -2025,6 +2155,8 @@ window.addEventListener('keydown', e => {
     return;
   }
   if ((e.key === 'f' || e.key === 'F') && !e.repeat) { setFill(true); return; }
+  if ((e.key === 'o' || e.key === 'O') && !e.repeat) { $('metroBtn').onclick(); return; }
+  if ((e.key === 'k' || e.key === 'K') && !e.repeat && curClip()) { $('hlScaleB').onclick(); return; }
   if (e.shiftKey && /^Digit[1-8]$/.test(e.code)) {
     const i = +e.code.slice(5) - 1;
     st.tracks[i].mute = !st.tracks[i].mute;
@@ -2177,7 +2309,7 @@ $('recBtn').onclick = async () => {
   $('recBtn').classList.add('on');
   const playingSong = player.playing && st.mode === 'song';
   if (playingSong) {
-    $('recBtn').textContent = '🎙 VENTER…';
+    $('recBtn').textContent = '● VENTER…';
     toast('Optager fra næste takt på ' + st.tracks[tr].name + ' — 🎧 brug hovedtelefoner!');
     const startPos = player.position();
     const startBarNow = startPos ? Math.floor(startPos.songStep / BAR) : 0;
@@ -2189,13 +2321,13 @@ $('recBtn').onclick = async () => {
         rec.startStep = Math.floor(p.songStep / BAR) * BAR;
         rec.synced = true;
         mr.start();
-        $('recBtn').textContent = '🎙 OPTAGER';
+        $('recBtn').textContent = '● REC…';
       }
     }, 20);
   } else {
     rec.startStep = (st._startBar ?? 0) * BAR;
     mr.start();
-    $('recBtn').textContent = '🎙 OPTAGER';
+    $('recBtn').textContent = '● REC…';
     toast('Optager til ' + st.tracks[tr].name + ' — tryk 🎙 igen for at stoppe');
   }
 };
@@ -2205,7 +2337,7 @@ async function finishRec(stream) {
   if (r.waiter) clearInterval(r.waiter);
   stream.getTracks().forEach(t2 => t2.stop());
   $('recBtn').classList.remove('on');
-  $('recBtn').textContent = '🎙 OPTAG';
+  $('recBtn').textContent = '●';
   if (!r.chunks.length || r.startStep == null) { toast('Ingen optagelse', true); return; }
   try {
     const ab = await new Blob(r.chunks).arrayBuffer();
@@ -2396,7 +2528,7 @@ function finishJam() {
   const bars = Math.ceil(jam.atSteps / BAR);
   jam = null;
   $('jamBtn').classList.remove('on');
-  $('jamBtn').textContent = '● OPTAG JAM→SANG';
+  $('jamBtn').textContent = '● SESSION→ARR REC';
   if (!clips.length) { toast('Intet optaget endnu', true); return; }
   st.arr = { ...emptyArr(), clips };
   persist(); renderSongUI();
@@ -2469,6 +2601,22 @@ function tick() {
         const prog = slotEl.querySelector('.prog');
         if (prog) prog.style.width = (p * 100) + '%';
       });
+      document.querySelectorAll('#sesGrid .statusField:not(.main)').forEach(sf => {
+        const ti = +sf.dataset.ti;
+        const Ls = L[ti];
+        const c2 = Ls.play && st.clips[Ls.play];
+        if (!c2 || !player.playing) {
+          sf.classList.remove('live');
+        } else {
+          sf.classList.add('live');
+          const rel2 = pos.abs - Ls.at;
+          const cl2 = clipLen(c2);
+          sf.querySelector('.stLoops').textContent = Math.floor(rel2 / c2.len) + 1;
+          sf.querySelector('.stLen').textContent = cl2 / 4;
+          const frac2 = ((rel2 % cl2) + cl2) % cl2 / cl2;
+          sf.querySelector('.stPie').style.background = `conic-gradient(${c2.color || st.tracks[ti].color} ${Math.round(frac2 * 360)}deg, #00000022 0)`;
+        }
+      });
       const key = 'j' + pos.abs;
       if (key !== lastLED) {
         lastLED = key;
@@ -2481,6 +2629,8 @@ function tick() {
         if (pos.abs % BAR === 0) renderSession(); // koeer blev anvendt paa takt-graensen
       }
     }
+    const s0 = pos.songStep != null ? pos.songStep : pos.abs;
+    $('posBox').textContent = `${Math.floor(s0 / BAR) + 1}. ${Math.floor((s0 % BAR) / 4) + 1}. ${(s0 % 4) + 1}`;
     const ph = document.getElementById('arrPlayhead');
     if (ph) {
       const miniPh = document.getElementById('arrMiniPh');
@@ -2649,6 +2799,33 @@ function renderAll() {
   renderClipEditor();
 }
 preloadSamples(st).then(() => {});
+// ---------- v16: Control Bar (Live 12) ----------
+st.quant = st.quant ?? 16;
+$('quantSel').value = String(st.quant);
+$('quantSel').onchange = () => { st.quant = +$('quantSel').value; persist(); };
+$('metroBtn').classList.toggle('on', !!st.metro);
+$('metroBtn').onclick = () => { st.metro = !st.metro; $('metroBtn').classList.toggle('on', !!st.metro); persist(); };
+let _taps = [];
+$('tapBtn').onclick = () => {
+  const now = performance.now();
+  _taps = _taps.filter(t2 => now - t2 < 3000);
+  _taps.push(now);
+  if (_taps.length >= 2) {
+    const iv = (_taps[_taps.length - 1] - _taps[0]) / (_taps.length - 1);
+    const b2 = Math.max(60, Math.min(200, Math.round(60000 / iv)));
+    st.bpm = b2; $('bpm').value = b2; persist();
+  }
+};
+$('stopBtn').onclick = () => { if (player.playing) togglePlay(); };
+// Info View (Live 12): hover-hjaelp i nederste venstre hjoerne
+document.addEventListener('mouseover', e => {
+  const el2 = e.target && e.target.closest ? e.target.closest('[title]') : null;
+  if (!el2 || !el2.getAttribute('title')) return;
+  const t2 = (el2.textContent || '').trim().replace(/\s+/g, ' ');
+  $('ivTitle').textContent = t2 ? t2.slice(0, 26) : 'Info';
+  $('ivText').textContent = el2.getAttribute('title');
+});
+
 window.__simon = { st: () => st, player, live, midiTest: { midiNoteOn, midiNoteOff, captureMidi, setRec: v => { midiRecOn = v; } } };
 $('verTag').textContent = APP_VER;
 // aabn med foerste scenes foerste clip valgt, saa editoren aldrig er tom
