@@ -4,15 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Simons Musikmaskine</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=7">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%230b0b0d'/><text x='50' y='72' font-size='58' text-anchor='middle' fill='%23c8ff2e' font-family='monospace' font-weight='bold'>S</text></svg>">
 </head>
 <body>
 
 <header id="top">
-  <div id="logo">SIMONS<span>MUSIKMASKINE</span></div>
+  <div id="logo">SIMONS<span>MUSIKMASKINE</span><i id="verTag"></i></div>
   <button id="playBtn" title="Play/Stop (mellemrum)">►</button>
   <button id="fillBtn" title="Hold nede for FILL (eller hold F-tasten)">FILL</button>
+  <button id="recBtn" title="Optag din stemme som audio-clip på det valgte spor (🎧 brug hovedtelefoner). Spiller sangen, starter optagelsen på næste takt">🎙 OPTAG</button>
   <div class="tgroup">
     <label>BPM <input type="number" id="bpm" min="60" max="200" value="132"></label>
     <label>SWING <input type="range" id="swing" min="0" max="0.6" step="0.01" value="0.12"><span id="swingVal">12%</span></label>
@@ -35,9 +36,9 @@
   <button id="patPaste" title="Sæt ind i pattern">PASTE</button>
   <button id="patClear" title="Ryd pattern">CLR</button>
   <button id="viewToggle" title="Skift mellem step-grid og arrangement-tidslinjen (Tab)">⇄ ARRANGEMENT</button>
-  <div id="modeBox">
-    <button id="modePattern" class="on">PATTERN</button>
-    <button id="modeSong">SONG</button>
+  <div id="modeBox" title="Hvad ▶ spiller: det valgte pattern i ring, eller hele arrangementet. Følger automatisk viewet (Tab)">
+    <button id="modePattern" class="on" title="▶ spiller det valgte pattern i ring — arbejds-mode til at bygge grooves">PATTERN-LOOP</button>
+    <button id="modeSong" title="▶ spiller hele arrangementet (tidslinjen) fra startmarkøren">SANG</button>
   </div>
   <div id="songRow">
     <div id="songChain"></div>
@@ -64,6 +65,6 @@
 <div id="toast" hidden></div>
 <div id="projList" hidden><div id="projBox"><div id="projHead">PROJEKTER <button id="projClose">✕</button></div><div id="projItems"></div></div></div>
 
-<script type="module" src="app.js"></script>
+<script type="module" src="app.js?v=7"></script>
 </body>
 </html>

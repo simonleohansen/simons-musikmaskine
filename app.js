@@ -1,8 +1,9 @@
 // SIMONS MUSIKMASKINE — UI og tilstand (v6: Ableton-model i arrangementet —
 // frie clips pr. spor med position/laengde/kilde/overrides, markoerer, tempo-skift,
 // fri automation, loop-brace i takter, seek, JAM-til-clips)
-import { Player, renderWav, noteName, cutHz, songEntry, entrySteps, emptyArr, arrLenSteps, tempoAt, songDurationSec, BAR } from './engine.js';
+import { Player, renderWav, noteName, cutHz, songEntry, entrySteps, emptyArr, arrLenSteps, tempoAt, songDurationSec, BAR, recBuffers, registerRecBuffer, encodeWav } from './engine.js?v=7';
 
+const APP_VER = 'v7';
 const $ = id => document.getElementById(id);
 const PATTERN_NAMES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 const TRACK_COLORS = ['#ff3d5a', '#ff9f2e', '#ffd83d', '#c8ff2e', '#3dffc0', '#3db9ff', '#a06bff', '#ff5ad0'];
@@ -611,10 +612,29 @@ function toggleView(v) {
   $('arr').hidden = curView !== 'arr';
   $('viewToggle').textContent = curView === 'seq' ? '⇄ ARRANGEMENT' : '⇄ STEP-GRID';
   $('viewToggle').classList.toggle('on', curView === 'arr');
-  if (curView === 'arr') renderArr();
+  // mode foelger viewet: arrangement aabent = ▶ spiller sangen, step-grid = ▶ looper pattern
+  const wantMode = (curView === 'arr' && st.arr.clips.length) ? 'song' : 'pattern';
+  if (st.mode !== wantMode && !player.playing) { st.mode = wantMode; persist(); }
+  renderSongUI();
 }
 $('viewToggle').onclick = () => toggleView();
 
+// waveform-preview af en optagelse som SVG-baggrund
+function waveformURI(buf, color) {
+  const d = buf.getChannelData(0);
+  const cols = 160;
+  const stride = Math.max(1, Math.floor(d.length / cols));
+  let rects = '';
+  for (let c2 = 0; c2 < cols; c2++) {
+    let m = 0;
+    const base = c2 * stride;
+    for (let i = base; i < Math.min(base + stride, d.length); i += 8) m = Math.max(m, Math.abs(d[i]));
+    const h = Math.max(0.6, m * 11);
+    rects += `<rect x="${c2 + 0.08}" y="${(12 - h) / 2}" width="0.84" height="${h}" rx="0.2"/>`;
+  }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${cols} 12" preserveAspectRatio="none"><g fill="${color}">${rects}</g></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
 // mini-preview af et spors loop som SVG-baggrund (gentages pr. loop via background-size)
 function trackMarksURI(ti, pIdx, color) {
   const P = st.patterns[pIdx];
@@ -661,6 +681,31 @@ function addClip(tr, atBar, lenBars, p, extra = {}) {
   placeClip(c);
   return c;
 }
+// clip-udklipsholder: cmd/ctrl+C/X/V + D paa den valgte clip
+let clipClipboard = null;
+function selClipObj() { return st.arr.clips.find(c => c.id === selClip) || null; }
+function copyClip(cut = false) {
+  const c = selClipObj();
+  if (!c) { toast('Ingen clip valgt — klik på en clip først', true); return; }
+  clipClipboard = snapshot(c);
+  if (cut) {
+    st.arr.clips = st.arr.clips.filter(x => x.id !== c.id);
+    selClip = null;
+    persist(); renderSongUI();
+  }
+  toast((cut ? 'Klippet: ' : 'Kopieret: ') + st.tracks[c.tr].name + '-clip (' + c.len / BAR + ' takter) — cmd+V sætter ind ved ▸');
+}
+function pasteClip(barOverride = null) {
+  if (!clipClipboard) { toast('Udklipsholderen er tom (cmd+C på en clip først)', true); return; }
+  const pos = player.position();
+  const bar = barOverride != null ? barOverride
+    : (pos && pos.songStep != null ? Math.floor(pos.songStep / BAR) : (st._startBar ?? 0));
+  const c = { ...snapshot(clipClipboard), id: newClipId(), at: bar * BAR };
+  placeClip(c);
+  selClip = c.id;
+  persist(); renderSongUI();
+  toast('Sat ind på takt ' + (bar + 1));
+}
 // + TILFØJ: laeg det aktuelle pattern ind som clips paa alle spor med indhold (4 takter, bagest)
 $('songAdd').onclick = () => {
   const atBar = arrLenSteps(st) / BAR === 1 && !st.arr.clips.length ? 0 : Math.ceil(arrLenSteps(st) / BAR);
@@ -698,14 +743,16 @@ function openClipEditor(ev, clip) {
   const tr = st.tracks[clip.tr];
   const pop = document.createElement('div');
   pop.id = 'clipPop';
+  const isAudio = !!clip.audio;
   const srcBtns = PATTERN_NAMES.map((nm, pi) =>
     `<button class="srcBtn" data-p="${pi}" ${trackHasData(pi, clip.tr) ? '' : 'disabled'}>${nm}</button>`).join('');
-  pop.innerHTML = `<div class="eucTitle" style="color:${tr.color}">${tr.name} · TAKT ${clip.at / BAR + 1}</div>
-    <div class="entRow"><span class="plabel">KILDE</span><div class="srcRow">${srcBtns}</div></div>
+  pop.innerHTML = `<div class="eucTitle" style="color:${tr.color}">${tr.name} · TAKT ${clip.at / BAR + 1}${isAudio ? ' · 🎙 OPTAGELSE' : ''}</div>
+    ${isAudio ? '' : `<div class="entRow"><span class="plabel">KILDE</span><div class="srcRow">${srcBtns}</div></div>`}
     <label>LÆNGDE <button id="clD">−</button> <b id="clV"></b> <button id="clI">+</button> <span style="color:var(--dim)">takter</span></label>
     <label>TONE <input id="cpN" type="range" min="-24" max="24" step="1"> <b id="cpNV"></b></label>
     <label>NIVEAU <input id="cpL" type="range" min="0.05" max="1" step="0.01"> <b id="cpLV"></b></label>
     <label>CUTOFF <input id="cpC" type="range" min="0" max="1" step="0.01"> <b id="cpCV"></b> <button id="cpCX">✕</button></label>
+    ${isAudio ? '<label>OFFSET <input id="cpO" type="range" min="-250" max="250" step="5"> <b id="cpOV"></b></label>' : ''}
     <div class="eucBtns"><button id="cpSplit">✂ SPLIT</button><button id="cpDup">⧉</button><button id="cpDel">✕ SLET</button><button id="cpClose">LUK</button></div>`;
   pop.style.left = Math.min(ev.clientX - 30, innerWidth - 290) + 'px';
   pop.style.top = Math.min(ev.clientY + 12, innerHeight - 260) + 'px';
@@ -723,9 +770,20 @@ function openClipEditor(ev, clip) {
     q('#cpC').value = hasCut ? clip.cut : 0.8;
     q('#cpC').classList.toggle('unset', !hasCut);
     q('#cpCV').textContent = hasCut ? Math.round(clip.cut * 100) + '%' : '—';
+    if (isAudio) {
+      q('#cpO').value = clip.off ?? 0;
+      q('#cpOV').textContent = (clip.off ?? 0) + 'ms';
+    }
     persist(); renderSongUI();
   };
   pop.querySelectorAll('.srcBtn').forEach(b2 => { b2.onclick = () => { clip.p = +b2.dataset.p; sync(); }; });
+  if (isAudio) {
+    q('#cpO').oninput = () => {
+      const v = +q('#cpO').value;
+      if (v) clip.off = v; else delete clip.off;
+      sync();
+    };
+  }
   q('#clD').onclick = () => { clip.len = Math.max(BAR, clip.len - BAR); placeClip(clip); sync(); };
   q('#clI').onclick = () => { clip.len += BAR; placeClip(clip); sync(); };
   q('#cpN').oninput = () => { const v = +q('#cpN').value; if (v) clip.n = v; else delete clip.n; sync(); };
@@ -736,6 +794,7 @@ function openClipEditor(ev, clip) {
     if (clip.len < 2 * BAR) { toast('Clip er kun 1 takt', true); return; }
     const half = Math.floor(clip.len / BAR / 2) * BAR;
     const right = { ...snapshot(clip), id: newClipId(), at: clip.at + half, len: clip.len - half };
+    if (isAudio) right.skip = (clip.skip || 0) + half;   // hoejre halvdel fortsaetter i optagelsen
     clip.len = half;
     st.arr.clips.push(right);
     persist(); renderSongUI(); pop.remove();
@@ -790,7 +849,8 @@ function renderArr() {
   const tb = document.createElement('div');
   tb.id = 'arrTb';
   const hasLoop = st.arr.loopA != null && st.arr.loopB != null;
-  tb.innerHTML = `<span id="arrInfo">${st.arr.clips.length ? Math.ceil(arrLenSteps(st) / BAR) + ' takter · ' + st.arr.clips.length + ' clips · ' + fmtDur(songDurationSec(st)) : 'Tomt arrangement — dobbeltklik på en bane for at lægge en clip'}</span>`
+  const playNote = (player.playing && st.mode === 'pattern') ? '⚠ ▶ spiller PATTERN-LOOP lige nu — tryk SANG for at spille tidslinjen · ' : '';
+  tb.innerHTML = `<span id="arrInfo">${playNote}${st.arr.clips.length ? Math.ceil(arrLenSteps(st) / BAR) + ' takter · ' + st.arr.clips.length + ' clips · ' + fmtDur(songDurationSec(st)) : 'Tomt arrangement — dobbeltklik på en bane for at vælge et pattern og lægge en clip ind'}</span>`
     + (hasLoop ? `<span id="arrLoopInfo">⟳ LOOP TAKT ${st.arr.loopA + 1}–${st.arr.loopB}</span><button id="arrLoopClr">RYD</button>` : '')
     + `<span class="sp"></span><button id="arrZoomOut" title="Zoom ud">−</button><b id="arrZoomV">${Math.round(arrZoom * 100)}%</b><button id="arrZoomIn" title="Zoom ind">+</button>`;
   el.appendChild(tb);
@@ -934,35 +994,62 @@ function renderArr() {
     const lane = document.createElement('div');
     lane.className = 'arrLane';
     lane.style.backgroundSize = (100 / totalBars) + '% 100%'; // takt-grid
-    // dobbeltklik paa tom bane = ny clip med det aktuelle pattern
-    lane.ondblclick = ev => {
-      if (ev.target !== lane) return;
-      if (!trackHasData(st.curPattern, ti)) { toast('Pattern ' + PATTERN_NAMES[st.curPattern] + ' har intet på ' + tr.name, true); return; }
+    // dobbeltklik/hoejreklik paa tom bane = vaelg pattern og laeg clip ind
+    const laneMenu = ev => {
       const r = lane.getBoundingClientRect();
       if (!r.width) return;
       const bar = Math.floor((ev.clientX - r.left) / r.width * totalBars);
-      const c = addClip(ti, bar, 4, st.curPattern);
-      selClip = c.id;
-      persist(); renderSongUI();
+      const items = [];
+      PATTERN_NAMES.forEach((nm, pi) => {
+        if (!trackHasData(pi, ti)) return;
+        items.push(['▣ INDSÆT PATTERN ' + nm + ' (4 takter)', () => {
+          const c = addClip(ti, bar, 4, pi);
+          selClip = c.id;
+          persist(); renderSongUI();
+        }]);
+      });
+      if (!items.length) { toast(tr.name + ' har ingen steps i noget pattern endnu — læg dem i step-grid’et (Tab)', true); return; }
+      if (clipClipboard && clipClipboard.tr === ti) {
+        items.push(['📋 SÆT IND HER', () => pasteClip(bar)]);
+      }
+      menuAt(ev, items);
     };
+    lane.ondblclick = ev => { if (ev.target === lane) laneMenu(ev); };
+    lane.oncontextmenu = ev => { if (ev.target === lane) { ev.preventDefault(); laneMenu(ev); } };
     for (const c of st.arr.clips.filter(x => x.tr === ti)) {
       const elC = document.createElement('button');
-      elC.className = 'arrClip' + (selClip === c.id ? ' sel' : '');
+      elC.className = 'arrClip' + (selClip === c.id ? ' sel' : '') + (c.audio ? ' audio' : '');
       elC.style.left = xPct(c.at) + '%';
       elC.style.width = xPct(c.len) + '%';
-      elC.style.background = tr.color;
-      const mk = trackMarksURI(ti, c.p, '#0b0b0d');
-      if (mk) {
-        elC.style.backgroundImage = mk.uri;
-        elC.style.backgroundRepeat = 'repeat-x';
-        elC.style.backgroundSize = (mk.L / c.len * 100) + '% 100%';
+      const badges = [];
+      if (c.audio) {
+        const buf = recBuffers.get(c.audio);
+        elC.style.background = '#1b1b20';
+        elC.style.borderColor = tr.color;
+        if (buf) {
+          const clipSec = c.len * (60 / tempoAt(st, c.at) / 4);
+          const audiblePct = Math.min(100, (buf.duration / Math.pow(2, (c.n || 0) / 12)) / clipSec * 100);
+          elC.style.backgroundImage = waveformURI(buf, tr.color);
+          elC.style.backgroundRepeat = 'no-repeat';
+          elC.style.backgroundSize = audiblePct + '% 100%';
+        }
+        badges.push('🎙');
+        elC.title = `${tr.name} · optagelse · ${c.len / BAR} takter — træk: flyt (alt: kopiér) · kanter: længde · dobbeltklik: redigér (pitch, niveau, offset) · Delete: slet`;
+      } else {
+        elC.style.background = tr.color;
+        const mk = trackMarksURI(ti, c.p, '#0b0b0d');
+        if (mk) {
+          elC.style.backgroundImage = mk.uri;
+          elC.style.backgroundRepeat = 'repeat-x';
+          elC.style.backgroundSize = (mk.L / c.len * 100) + '% 100%';
+        }
+        badges.push(PATTERN_NAMES[c.p]);
+        elC.title = `${tr.name} · pattern ${PATTERN_NAMES[c.p]} · ${c.len / BAR} takter — træk: flyt (alt: kopiér) · kanter: længde · dobbeltklik/højreklik: redigér · Delete: slet`;
       }
       if ((c.lvl ?? 1) < 0.95) elC.style.opacity = 0.35 + 0.65 * c.lvl;
-      const badges = [PATTERN_NAMES[c.p]];
       if (c.n) badges.push((c.n > 0 ? '+' : '') + c.n);
       if (c.cut != null) badges.push('FLT');
       elC.innerHTML = `<span class="cellBadge">${badges.join(' ')}</span>`;
-      elC.title = `${tr.name} · pattern ${PATTERN_NAMES[c.p]} · ${c.len / BAR} takter — træk: flyt (alt: kopiér) · kanter: længde · dobbeltklik/højreklik: redigér · Delete: slet`;
       // pointer: flyt / resize venstre/hoejre kant / alt-kopiér
       let cd = null;
       elC.onpointerdown = ev => {
@@ -972,8 +1059,9 @@ function renderArr() {
         const laneR = lane.getBoundingClientRect();
         const pxPerStep = laneR.width / total;
         let mode = 'move';
-        if (ev.clientX < r.left + 9) mode = 'l';
-        else if (ev.clientX > r.right - 9) mode = 'r';
+        const edge = Math.min(14, r.width / 3);
+        if (ev.clientX < r.left + edge) mode = 'l';
+        else if (ev.clientX > r.right - edge) mode = 'r';
         cd = { mode, x0: ev.clientX, at0: c.at, len0: c.len, pxPerStep, moved: false };
         selClip = c.id;
         try { elC.setPointerCapture(ev.pointerId); } catch (e2) {}
@@ -1013,6 +1101,9 @@ function renderArr() {
             placeClip(c);
           }
         } else {
+          if (d.mode === 'l' && c.audio && d.newAt != null) {
+            c.skip = (c.skip || 0) + (d.newAt - d.at0);   // venstre-trim af optagelse bevarer timingen
+          }
           if (d.newAt != null) c.at = d.newAt;
           if (d.newLen != null) c.len = d.newLen;
           placeClip(c);
@@ -1105,11 +1196,16 @@ function renderArr() {
   makeAutoLane('mf', 'MASTER FLT', 'mf');
   makeAutoLane('vol', 'VOLUMEN', 'vol');
   makeAutoLane('pump', 'PUMP', 'pump');
-  // playhead
+  // playhead + startmarkoer
   const ph = document.createElement('div');
   ph.id = 'arrPlayhead';
   ph.hidden = true;
   wrap.appendChild(ph);
+  const sm = document.createElement('div');
+  sm.id = 'arrStartMark';
+  sm.title = 'Startmarkør — ▶ spiller herfra (sæt den ved at klikke på linjalen)';
+  sm.style.left = `calc(122px + (100% - 122px) * ${((st._startBar ?? 0) * BAR) / total})`;
+  wrap.appendChild(sm);
   scroller.appendChild(wrap);
   el.appendChild(scroller);
   const hint = document.createElement('div');
@@ -1149,6 +1245,22 @@ window.addEventListener('keydown', e => {
     persist(); renderSongUI();
     return;
   }
+  if ((e.metaKey || e.ctrlKey) && curView === 'arr') {          // clip: kopiér/klip/sæt ind/duplikér
+    const k = e.key.toLowerCase();
+    if (k === 'c') { e.preventDefault(); copyClip(false); return; }
+    if (k === 'x') { e.preventDefault(); copyClip(true); return; }
+    if (k === 'v') { e.preventDefault(); pasteClip(); return; }
+    if (k === 'd') {
+      e.preventDefault();
+      const c = selClipObj();
+      if (c) {
+        const dup = { ...snapshot(c), id: newClipId(), at: c.at + c.len };
+        placeClip(dup); selClip = dup.id;
+        persist(); renderSongUI();
+      }
+      return;
+    }
+  }
   if (e.shiftKey && /^Digit[1-8]$/.test(e.code)) {          // shift+1-8 = mute-toggle (performance)
     const i = +e.code.slice(5) - 1;
     st.tracks[i].mute = !st.tracks[i].mute;
@@ -1175,6 +1287,131 @@ function mfLabel() {
   return v < 0.5 ? 'LP' : 'HP';
 }
 $('projName').addEventListener('input', () => { st.name = $('projName').value; persist(); });
+
+// ---------- stemme-optagelse: mikrofon → audio-clip paa det valgte spor ----------
+function idbOpen() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('simon-db', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('recs');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function idbPut(k, v) {
+  const d = await idbOpen();
+  return new Promise((res, rej) => {
+    const tx = d.transaction('recs', 'readwrite');
+    tx.objectStore('recs').put(v, k);
+    tx.oncomplete = res;
+    tx.onerror = () => rej(tx.error);
+  });
+}
+async function idbAll() {
+  const d = await idbOpen();
+  return new Promise((res, rej) => {
+    const tx = d.transaction('recs');
+    const store = tx.objectStore('recs');
+    const keys = store.getAllKeys();
+    const vals = store.getAll();
+    tx.oncomplete = () => res(keys.result.map((k, i) => [k, vals.result[i]]));
+    tx.onerror = () => rej(tx.error);
+  });
+}
+// indlaes gemte optagelser ved start
+(async () => {
+  try {
+    const dctx = new (window.AudioContext || window.webkitAudioContext)();
+    for (const [id, wav] of await idbAll()) {
+      try { registerRecBuffer(id, await dctx.decodeAudioData(wav.slice(0))); } catch (e) {}
+    }
+    if (curView === 'arr') renderArr();
+  } catch (e) { console.warn('optagelser kunne ikke indlæses', e); }
+})();
+function trimNormalize(ctx, buf) {
+  const d = buf.getChannelData(0);
+  let a = 0, b = d.length - 1, peak = 0;
+  for (let i = 0; i < d.length; i++) peak = Math.max(peak, Math.abs(d[i]));
+  const thr = Math.max(0.015, peak * 0.04);
+  while (a < b && Math.abs(d[a]) < thr) a++;
+  while (b > a && Math.abs(d[b]) < thr) b--;
+  a = Math.max(0, a - 800); b = Math.min(d.length - 1, b + 4000);
+  const out = ctx.createBuffer(1, b - a + 1, buf.sampleRate);
+  const o = out.getChannelData(0);
+  const g = peak > 0.01 ? 0.9 / peak : 1;
+  for (let i = a; i <= b; i++) o[i - a] = d[i] * g;
+  return out;
+}
+let rec = null;
+$('recBtn').onclick = async () => {
+  if (rec) { rec.stopping = true; rec.mr.stop(); return; }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    toast('Kunne ikke få adgang til mikrofonen — tillad den i browseren', true);
+    return;
+  }
+  const tr = curTrack;
+  const mr = new MediaRecorder(stream);
+  rec = { mr, chunks: [], tr, startStep: null, synced: false };
+  mr.ondataavailable = ev => { if (ev.data.size) rec.chunks.push(ev.data); };
+  mr.onstop = () => finishRec(stream);
+  $('recBtn').classList.add('on');
+  const playingSong = player.playing && st.mode === 'song';
+  if (playingSong) {
+    // punch-in: start optagelsen paa naeste takt-graense
+    $('recBtn').textContent = '🎙 VENTER…';
+    toast('Optager fra næste takt på ' + st.tracks[tr].name + ' — 🎧 brug hovedtelefoner!');
+    const startPos = player.position();
+    const startBarNow = startPos ? Math.floor(startPos.songStep / BAR) : 0;
+    rec.waiter = setInterval(() => {
+      if (!rec) return;
+      const p = player.position();
+      if (p && p.songStep != null && Math.floor(p.songStep / BAR) > startBarNow) {
+        clearInterval(rec.waiter);
+        rec.startStep = Math.floor(p.songStep / BAR) * BAR;
+        rec.synced = true;
+        mr.start();
+        $('recBtn').textContent = '🎙 OPTAGER';
+      }
+    }, 20);
+  } else {
+    rec.startStep = (st._startBar ?? 0) * BAR;
+    mr.start();
+    $('recBtn').textContent = '🎙 OPTAGER';
+    toast('Optager til ' + st.tracks[tr].name + ' — tryk 🎙 igen for at stoppe');
+  }
+};
+async function finishRec(stream) {
+  const r = rec;
+  rec = null;
+  if (r.waiter) clearInterval(r.waiter);
+  stream.getTracks().forEach(t2 => t2.stop());
+  $('recBtn').classList.remove('on');
+  $('recBtn').textContent = '🎙 OPTAG';
+  if (!r.chunks.length || r.startStep == null) { toast('Ingen optagelse', true); return; }
+  try {
+    const ab = await new Blob(r.chunks).arrayBuffer();
+    const ctx = player.ensureCtx();
+    let buf = await ctx.decodeAudioData(ab);
+    if (!r.synced) buf = trimNormalize(ctx, buf);       // frie optagelser trimmes; punch-in bevarer timing
+    if (buf.duration < 0.15) { toast('Optagelsen var for kort', true); return; }
+    const id = 'r' + Date.now().toString(36);
+    registerRecBuffer(id, buf);
+    idbPut(id, encodeWav(buf)).catch(() => toast('Kunne ikke gemme optagelsen permanent (IndexedDB)', true));
+    const stepDur = 60 / st.bpm / 4;
+    const lenBars = Math.max(1, Math.ceil(buf.duration / (stepDur * BAR)));
+    const c = { id: newClipId(), tr: r.tr, at: r.startStep, len: lenBars * BAR, audio: id };
+    placeClip(c);
+    selClip = c.id;
+    persist();
+    if (curView !== 'arr') toggleView('arr'); else renderSongUI();
+    toast('🎙 Optagelse lagt på ' + st.tracks[r.tr].name + ' ved takt ' + (r.startStep / BAR + 1) + ' (' + lenBars + ' takter)');
+  } catch (e) {
+    console.error(e);
+    toast('Optagelsen kunne ikke afkodes', true);
+  }
+}
 
 // ---------- JAM-optagelse: performances fanges som clips i arrangementet ----------
 let jam = null;
@@ -1419,5 +1656,6 @@ function renderAll() {
   renderPanel();
 }
 window.__simon = { st: () => st, player };
+$('verTag').textContent = APP_VER;
 syncTop();
 renderAll();

@@ -483,13 +483,53 @@ export function schedStepAbs(rig, st, pattern, absStep, t, stepDur, lastFreqs, f
     }
   }
 }
-// planlaeg ét absolut step i ARRANGEMENTET: hvert spor spiller sin clip (hvis nogen)
-export function schedArrStep(rig, st, s, t, stepDur, lastFreqs) {
+// ---------- optagelser (stemme → audio-clips) ----------
+// audio-clip: {id, tr, at, len, audio: recId, n (pitch ±st), lvl, cut, off (ms finjustering), skip (steps ind i bufferen)}
+export const recBuffers = new Map();
+export function registerRecBuffer(id, buf) { recBuffers.set(id, buf); }
+function schedAudioClip(rig, c, s, t, stepDur) {
+  const buf = recBuffers.get(c.audio);
+  if (!buf) return;
+  const ctx = rig.ctx;
+  const rate = Math.pow(2, (c.n || 0) / 12);
+  const posInClip = (s - c.at) * stepDur;                    // sekunder inde i clip'en
+  const offSec = (c.off || 0) / 1000;
+  const skipSec = (c.skip || 0) * stepDur;
+  let bufPos = (posInClip - offSec + skipSec) * rate;        // position i bufferen
+  let startT = t;
+  if (bufPos < 0) { startT = t - bufPos / rate; bufPos = 0; }
+  if (bufPos >= buf.duration) return;
+  const remainWall = (c.at + c.len - s) * stepDur - (startT - t);
+  if (remainWall <= 0.01) return;
+  const src2 = ctx.createBufferSource();
+  src2.buffer = buf;
+  src2.playbackRate.value = rate;
+  const g = ctx.createGain();
+  const lvl = (c.lvl ?? 1) * 0.9;
+  g.gain.setValueAtTime(0.0001, startT);
+  g.gain.linearRampToValueAtTime(lvl, startT + 0.006);
+  g.gain.setTargetAtTime(0.0001, startT + remainWall - 0.015, 0.005);
+  let head = src2;
+  if (c.cut != null) {
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass'; f.frequency.value = cutHz(c.cut); f.Q.value = 1;
+    head.connect(f); head = f;
+  }
+  head.connect(g); g.connect(rig.trackIns[c.tr]);
+  src2.start(startT, bufPos, Math.max(0.02, remainWall * rate));
+}
+// planlaeg ét absolut step i ARRANGEMENTET: hvert spor spiller sin clip (hvis nogen).
+// entering = foerste step efter start/hop/loop-wrap (audio-clips skal genstartes med offset)
+export function schedArrStep(rig, st, s, t, stepDur, lastFreqs, entering = false) {
   const fill = !!st._fill;
   const src = st.duckTrack ?? 0;
   for (let tr = 0; tr < st.tracks.length; tr++) {
     const c = clipAt(st, tr, s);
     if (!c) { lastFreqs[tr] = lastFreqs[tr]; continue; }
+    if (c.audio) {
+      if (s === c.at || entering) schedAudioClip(rig, c, s, t, stepDur);
+      continue;
+    }
     const pat = st.patterns[c.p];
     const rel = s - c.at;
     const idx = rel % trackLen(pat, tr);
@@ -546,6 +586,7 @@ export class Player {
     this.playing = true;
     this.absStep = 0;      // absolut 16.-dels-taeller i det aktuelle pattern (pattern-mode)
     this.arrStep = Math.max(0, startStep); // absolut step i arrangementet (song-mode)
+    this._enter = true;    // foerste step: audio-clips genstartes med korrekt offset
     this._lastPatIdx = null;
     this.autoMF = null;
     this.autoVol = null;
@@ -590,7 +631,8 @@ export class Player {
         }
         st._pumpAuto = autoValAt(st.arr.auto.pump, s + 1);
         const swingOff = (s % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
-        schedArrStep(this.rig, st, s, this.nextTime + swingOff, stepDur, this.lastFreqs);
+        schedArrStep(this.rig, st, s, this.nextTime + swingOff, stepDur, this.lastFreqs, this._enter);
+        this._enter = false;
         this.stepLog.push({ t: this.nextTime, step: s % BAR, abs: s, pattern: null, songStep: s });
         if (this.stepLog.length > 80) this.stepLog.shift();
         this.nextTime += stepDur;
@@ -600,13 +642,15 @@ export class Player {
           if (st._jumpStep != null) {
             this.arrStep = st._jumpStep;
             st._jumpStep = null;
+            this._enter = true;
           } else {
             const a = st.arr.loopA, b = st.arr.loopB;
             if (a != null && b != null && b > a && this.arrStep >= b * BAR && this.arrStep - BAR < b * BAR) {
               this.arrStep = a * BAR;
+              this._enter = true;
             } else if (this.arrStep >= arrLenSteps(st)) {
               if (!st.songLoop) { this.stopAt = this.nextTime; }
-              else this.arrStep = 0;
+              else { this.arrStep = 0; this._enter = true; }
             }
           }
         }
@@ -715,7 +759,7 @@ export async function renderWav(st, what = 'song') {
       if (vVol != null) rig.master.gain.setTargetAtTime(vVol, t, 0.05);
       stR._pumpAuto = autoValAt(st.arr.auto.pump, s + 1);
       const swingOff = (s % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
-      schedArrStep(rig, stR, s, t + swingOff, stepDur, lastFreqs);
+      schedArrStep(rig, stR, s, t + swingOff, stepDur, lastFreqs, s === 0);
       t += stepDur;
     }
   } else {
