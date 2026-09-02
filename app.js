@@ -2,9 +2,9 @@
 // JAM (Session View): spor = kolonner, clips = launchbare celler, scener = rækker.
 // Ét klik = start (kvantiseret til næste takt, blinker i kø). Clips redigeres MENS de looper.
 // SANG (Arrangement): frie clips på tidslinjen. Tab skifter view; det du ser, er det du hører.
-import { Player, renderWav, noteName, cutHz, songEntry, entrySteps, emptyArr, arrLenSteps, tempoAt, songDurationSec, BAR, recBuffers, registerRecBuffer, encodeWav, liveOf, clipLen } from './engine.js?v=10';
+import { Player, renderWav, noteName, cutHz, songEntry, entrySteps, emptyArr, arrLenSteps, tempoAt, songDurationSec, BAR, recBuffers, registerRecBuffer, encodeWav, liveOf, clipLen } from './engine.js?v=11';
 
-const APP_VER = 'v10';
+const APP_VER = 'v11';
 const $ = id => document.getElementById(id);
 const PATTERN_NAMES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 const TRACK_COLORS = ['#ff3d5a', '#ff9f2e', '#ffd83d', '#c8ff2e', '#3dffc0', '#3db9ff', '#a06bff', '#ff5ad0'];
@@ -575,26 +575,64 @@ function sceneMenu(ev, i) {
   ]);
 }
 let slotDrag = null;
+// lille drejeknap (Live-look): traek lodret for at skrue
+function knobEl(get, set, title, size = 22) {
+  const w = document.createElement('div');
+  w.className = 'knob';
+  w.title = title;
+  const draw = () => {
+    const v = Math.max(0, Math.min(1, get()));
+    const a0 = 0.75 * Math.PI, a1 = a0 + v * 1.5 * Math.PI;
+    const r = size / 2, ar = r - 3;
+    const large = (a1 - a0) > Math.PI ? 1 : 0;
+    const x0 = r + ar * Math.cos(a0), y0 = r + ar * Math.sin(a0);
+    const x1 = r + ar * Math.cos(a1), y1 = r + ar * Math.sin(a1);
+    w.innerHTML = `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">
+      <circle cx="${r}" cy="${r}" r="${r - 1.5}" class="kbg"/>
+      <path d="M${x0.toFixed(1)} ${y0.toFixed(1)} A${ar} ${ar} 0 ${large} 1 ${x1.toFixed(1)} ${y1.toFixed(1)}" class="karc"/>
+      <line x1="${r}" y1="${r}" x2="${(r + (ar - 1) * Math.cos(a1)).toFixed(1)}" y2="${(r + (ar - 1) * Math.sin(a1)).toFixed(1)}" class="kptr"/>
+    </svg>`;
+  };
+  let kd = null;
+  w.onpointerdown = ev => {
+    ev.preventDefault();
+    kd = { y0: ev.clientY, v0: get() };
+    try { w.setPointerCapture(ev.pointerId); } catch (e2) {}
+  };
+  w.onpointermove = ev => {
+    if (!kd) return;
+    set(Math.max(0, Math.min(1, kd.v0 + (kd.y0 - ev.clientY) / 120)));
+    draw();
+  };
+  w.onpointerup = () => { kd = null; persist(); };
+  draw();
+  return w;
+}
+function dbLabel(level) {
+  if (level <= 0.001) return '-inf';
+  return (20 * Math.log10(level)).toFixed(1);
+}
 function renderSession() {
   const el = $('session');
-  if (!el || el.hidden) { if (el && el.hidden) return; }
   el.innerHTML = '';
-  const wrap = document.createElement('div');
-  wrap.id = 'sesWrap';
   const scenes = st.session.scenes;
   const L = live();
+  const grid = document.createElement('div');
+  grid.id = 'sesGrid';
+  const mixer = document.createElement('div');
+  mixer.id = 'sesMixer';
   st.tracks.forEach((tr, ti) => {
+    // ---- kolonnens slot-del ----
     const col = document.createElement('div');
     col.className = 'sesCol' + (ti === curTrack ? ' sel' : '');
     const head = document.createElement('div');
     head.className = 'sesHead';
-    head.style.background = tr.color;
-    head.textContent = tr.name;
-    head.title = 'Klik: vælg sporet (lyd-panelet nederst) · dobbeltklik: omdøb';
+    head.innerHTML = `<span class="hdChip" style="background:${tr.color}"></span>${tr.name}`;
+    head.title = 'Klik: vælg sporet (lyd-panelet + MIDI) · dobbeltklik: omdøb';
     head.onclick = () => selectTrack(ti);
     head.ondblclick = () => {
       const name = prompt('Spornavn:', tr.name);
-      if (name && name.trim()) { tr.name = name.trim().toUpperCase().slice(0, 10); persist(); renderSession(); renderPanel(); }
+      if (name && name.trim()) { tr.name = name.trim().toUpperCase().slice(0, 12); persist(); renderSession(); renderPanel(); }
     };
     col.appendChild(head);
     scenes.forEach((sc, si) => {
@@ -614,7 +652,7 @@ function renderSession() {
         slot.classList.toggle('edit', selClipId === id);
         slot.style.setProperty('--cc', tr.color);
         slot.innerHTML = `<span class="tri">${playingHere ? '▶' : '▷'}</span><span class="nm">${c.name}</span><span class="prog"></span>`;
-        slot.title = `${c.name} — klik: start på næste takt · højreklik: menu · cmd+D: duplikér · 0: deaktivér`;
+        slot.title = `${c.name} — klik: start på næste takt · dobbeltklik: redigér · højreklik: menu`;
         slot.onpointerdown = ev => {
           if (ev.button !== 0) return;
           slotDrag = { si, ti, id, x0: ev.clientX, y0: ev.clientY, moved: false, el: slot, target: null };
@@ -654,40 +692,78 @@ function renderSession() {
             renderSession();
             return;
           }
-          launchClip(si, ti);   // klik = start (pointerup uden traek)
+          launchClip(si, ti);
         };
         slot.onpointerup = endSlot;
         slot.onpointercancel = () => { slotDrag = null; slot.classList.remove('dragging'); };
+        slot.ondblclick = () => selectClip(id, ti, si);
       } else {
-        slot.innerHTML = `<span class="plus">+</span>`;
-        slot.title = 'Tom slot — klik: ny clip · højreklik: læg eksisterende clip her';
-        slot.onclick = () => createClipInSlot(si, ti);
+        // tom slot = ■ stop-knap (praecis som Live) · dobbeltklik = ny clip
+        const stops = L[ti].next === 'stop';
+        slot.innerHTML = `<span class="stopSq${stops ? ' q' : ''}"></span>`;
+        slot.title = '■ stopper sporets clip (på næste takt) · dobbeltklik: ny clip · højreklik: menu';
+        slot.onclick = () => stopTrack(ti);
+        slot.ondblclick = () => createClipInSlot(si, ti);
       }
       slot.oncontextmenu = ev => { ev.preventDefault(); selectTrack(ti); slotMenu(ev, si, ti); };
       col.appendChild(slot);
     });
-    const stopB = document.createElement('button');
-    stopB.className = 'sesStop' + (L[ti].next === 'stop' ? ' queued' : '');
-    stopB.textContent = '■';
-    stopB.title = 'Stop sporets clip (på næste takt)';
-    stopB.onclick = () => stopTrack(ti);
-    col.appendChild(stopB);
-    const mix = document.createElement('div');
-    mix.className = 'sesMix';
-    mix.innerHTML = `<input class="sesLvl" type="range" min="0" max="1" step="0.01" value="${tr.level}" title="Niveau">
-      <button class="sesM${tr.mute ? ' on' : ''}" title="Mute (shift+${ti + 1})">M</button>
-      <button class="sesS${tr.solo ? ' on' : ''}" title="Solo">S</button>`;
-    mix.querySelector('.sesLvl').oninput = ev => { tr.level = +ev.target.value; persist(); player.refreshTrackGains(); };
-    mix.querySelector('.sesM').onclick = () => { tr.mute = !tr.mute; persist(); renderSession(); player.refreshTrackGains(); };
-    mix.querySelector('.sesS').onclick = () => { tr.solo = !tr.solo; persist(); renderSession(); player.refreshTrackGains(); };
-    col.appendChild(mix);
-    wrap.appendChild(col);
+    grid.appendChild(col);
+    // ---- kolonnens mixer-del (Live-stil) ----
+    const mc = document.createElement('div');
+    mc.className = 'mixCol' + (ti === curTrack ? ' sel' : '');
+    const stopRow = document.createElement('button');
+    stopRow.className = 'mxStop' + (L[ti].next === 'stop' ? ' q' : '');
+    stopRow.textContent = '■';
+    stopRow.title = 'Stop sporets clip (på næste takt)';
+    stopRow.onclick = () => stopTrack(ti);
+    mc.appendChild(stopRow);
+    const sends = document.createElement('div');
+    sends.className = 'mxSends';
+    sends.innerHTML = '<i>Sends</i>';
+    const ka = knobEl(() => tr.patch.sendD ?? 0, v => { tr.patch.sendD = Math.round(v * 100) / 100; }, 'Send A: delay');
+    const kb = knobEl(() => tr.patch.sendV ?? 0, v => { tr.patch.sendV = Math.round(v * 100) / 100; }, 'Send B: reverb');
+    const kwrap = document.createElement('div');
+    kwrap.className = 'mxKnobs';
+    const la = document.createElement('span'); la.className = 'kl'; la.textContent = 'A';
+    const lb = document.createElement('span'); lb.className = 'kl'; lb.textContent = 'B';
+    kwrap.append(ka, la, kb, lb);
+    sends.appendChild(kwrap);
+    mc.appendChild(sends);
+    const volRow = document.createElement('div');
+    volRow.className = 'mxVol';
+    const db = document.createElement('span');
+    db.className = 'mxDb';
+    db.textContent = dbLabel(tr.level);
+    const fader = document.createElement('input');
+    fader.type = 'range'; fader.min = 0; fader.max = 1; fader.step = 0.01; fader.value = tr.level;
+    fader.className = 'mxFader';
+    fader.title = 'Volumen: ' + tr.name;
+    fader.oninput = () => {
+      tr.level = +fader.value;
+      db.textContent = dbLabel(tr.level);
+      persist(); player.refreshTrackGains();
+    };
+    const kpan = knobEl(() => ((tr.patch.pan ?? 0) + 1) / 2, v => { tr.patch.pan = Math.round((v * 2 - 1) * 100) / 100; }, 'Pan', 18);
+    volRow.append(db, fader, kpan);
+    mc.appendChild(volRow);
+    const btns = document.createElement('div');
+    btns.className = 'mxBtns';
+    btns.innerHTML = `<button class="mxAct${tr.mute ? '' : ' on'}" title="Spor til/fra (mute — shift+${ti + 1})">${ti + 1}</button>
+      <button class="mxS${tr.solo ? ' on' : ''}" title="Solo">S</button>
+      <button class="mxSel${ti === curTrack ? ' on' : ''}" title="Vælg sporet (MIDI + lyd-panel)">●</button>`;
+    btns.querySelector('.mxAct').onclick = () => { tr.mute = !tr.mute; persist(); renderSession(); player.refreshTrackGains(); };
+    btns.querySelector('.mxS').onclick = () => { tr.solo = !tr.solo; persist(); renderSession(); player.refreshTrackGains(); };
+    btns.querySelector('.mxSel').onclick = () => selectTrack(ti);
+    mc.appendChild(btns);
+    mixer.appendChild(mc);
   });
+  // ---- MAIN/scene-kolonnen ----
   const main = document.createElement('div');
   main.className = 'sesCol main';
   const mh = document.createElement('div');
   mh.className = 'sesHead';
-  mh.textContent = 'SCENER';
+  mh.textContent = 'Main';
   main.appendChild(mh);
   scenes.forEach((sc, si) => {
     const b = document.createElement('button');
@@ -695,7 +771,7 @@ function renderSession() {
     const anyPlaying = sc.slots.some((id, tr2) => id && L[tr2].play === id) && player.playing && st.mode === 'jam';
     b.className = 'sceneBtn' + (si === selScene ? ' sel' : '') + (anyQueued ? ' queued' : '') + (anyPlaying ? ' playing' : '');
     b.innerHTML = `<span class="tri">▶</span><span class="nm">${sc.name}</span>`;
-    b.title = `Start hele scenen "${sc.name}" (tast ${si + 1}) — tomme slots stopper deres spor · dobbeltklik: omdøb · højreklik: menu`;
+    b.title = `Start scenen "${sc.name}" (tast ${si + 1}) · dobbeltklik: omdøb · højreklik: menu`;
     b.onclick = () => launchScene(si);
     b.ondblclick = () => {
       const nm = prompt('Scene-navn:', sc.name);
@@ -704,18 +780,21 @@ function renderSession() {
     b.oncontextmenu = ev => { ev.preventDefault(); sceneMenu(ev, si); };
     main.appendChild(b);
   });
+  grid.appendChild(main);
+  const mainMix = document.createElement('div');
+  mainMix.className = 'mixCol main';
   const stopAllB = document.createElement('button');
-  stopAllB.className = 'sesStop all';
+  stopAllB.className = 'mxStop all';
   stopAllB.textContent = '■ STOP ALLE';
   stopAllB.onclick = stopAll;
-  main.appendChild(stopAllB);
   const addB = document.createElement('button');
   addB.className = 'sceneAdd';
   addB.textContent = '+ SCENE';
   addB.onclick = () => { addScene(); renderSession(); };
-  main.appendChild(addB);
-  wrap.appendChild(main);
-  el.appendChild(wrap);
+  mainMix.append(stopAllB, addB);
+  mixer.appendChild(mainMix);
+  el.appendChild(grid);
+  el.appendChild(mixer);
   renderBrowser();
 }
 
