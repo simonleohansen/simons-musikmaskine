@@ -2,9 +2,9 @@
 // JAM (Session View): spor = kolonner, clips = launchbare celler, scener = rækker.
 // Ét klik = start (kvantiseret til næste takt, blinker i kø). Clips redigeres MENS de looper.
 // SANG (Arrangement): frie clips på tidslinjen. Tab skifter view; det du ser, er det du hører.
-import { Player, renderWav, noteName, cutHz, songEntry, entrySteps, emptyArr, arrLenSteps, tempoAt, songDurationSec, BAR, recBuffers, registerRecBuffer, encodeWav, liveOf, clipLen, sampleBuffers, loadSample, preloadSamples } from './engine.js?v=13';
+import { Player, renderWav, noteName, cutHz, songEntry, entrySteps, emptyArr, arrLenSteps, tempoAt, songDurationSec, BAR, recBuffers, registerRecBuffer, encodeWav, liveOf, clipLen, sampleBuffers, loadSample, preloadSamples } from './engine.js?v=14';
 
-const APP_VER = 'v13';
+const APP_VER = 'v14';
 const $ = id => document.getElementById(id);
 const PATTERN_NAMES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 const TRACK_COLORS = ['#ff3d5a', '#ff9f2e', '#ffd83d', '#c8ff2e', '#3dffc0', '#3db9ff', '#a06bff', '#ff5ad0'];
@@ -201,6 +201,11 @@ function migrate(s) {
     delete s.patterns;
     delete s.curPattern;
   }
+  if (s.clips) {
+    for (const c of Object.values(s.clips)) {
+      if (/^[A-H]$/.test(c.name || '')) c.name = ((s.tracks[c.tr]?.name || 'CLIP') + ' ' + c.name).slice(0, 14);
+    }
+  }
   if (!s.clips) s.clips = {};
   if (!s.session) s.session = { scenes: Array.from({ length: 4 }, (_, i) => ({ name: '' + (i + 1), slots: new Array(8).fill(null) })) };
   if (s.mode !== 'song') s.mode = 'jam';
@@ -353,7 +358,7 @@ function renderBrowser() {
     return box;
   };
   // LYDE: klik = hoer paa valgt spor · dobbeltklik = indlaes · traek til en spor-kolonne
-  const sounds = sec('LYDE', 'Klik: hør lyden · dobbeltklik: læg den på det valgte spor · træk den hen på et spor');
+  const sounds = sec('SYNTHS', 'Lyde maskinen SELV laver (indstillinger til synthen — kan skrues på bagefter). Klik: hør · dobbeltklik: læg på valgt spor · træk til et spor');
   PRESETS.forEach((pr, pi) => {
     const row = document.createElement('button');
     row.className = 'brRow';
@@ -388,12 +393,13 @@ function renderBrowser() {
     sounds.appendChild(row);
   });
   // KITS: dobbeltklik = indlaes alle 8 spor
-  const kits = sec('KITS', 'Hele lydpakker — dobbeltklik indlæser alle 8 spor (clips røres ikke)');
+  const kits = sec('KITS', 'Hele lydpakker: 8 sammenhørende synth-lyde, én pr. spor. Dobbeltklik skifter ALLE 8 spors lyde på én gang — dine clips/steps røres ikke, de spiller videre med de nye lyde');
   KITS.forEach(kit => {
     const row = document.createElement('button');
     row.className = 'brRow';
     row.innerHTML = `<span class="brIco">▦</span>${kit.n}`;
     row.title = kit.d + ' — dobbeltklik: indlæs alle 8 spor';
+    row.onclick = () => toast('Kit = hel lydpakke til alle 8 spor — DOBBELTKLIK for at indlæse ' + kit.n);
     row.ondblclick = () => {
       kit.tracks.forEach(([nm, pi], tr) => {
         st.tracks[tr].patch = { ...PRESETS[pi].p };
@@ -406,7 +412,7 @@ function renderBrowser() {
   });
   // SAMPLES: rigtige lyde fra samples/-mapperne — klik = hoer · dobbeltklik = laeg paa valgt spor
   if (sampleManifest) {
-    const sbox = sec('SAMPLES', 'Rigtige lyde (CC0) i mapper — klik: hør · dobbeltklik: læg på det valgte spor (pitches af steps/MIDI)');
+    const sbox = sec('SAMPLES', 'Rigtige optagede lyde (i modsætning til SYNTHS). Klik: hør · dobbeltklik: gør samplen til det valgte spors lyd — pitches af steps/MIDI, kører gennem filter/envelope/duck');
     for (const [folder, files] of Object.entries(sampleManifest)) {
       const fRow = document.createElement('button');
       fRow.className = 'brRow brFolder';
@@ -451,27 +457,36 @@ function renderBrowser() {
     }
   }
   // CLIPS: alle projektets clips — klik = vaelg/redigér · dobbeltklik = laeg i ledig slot
-  const clipsBox = sec('CLIPS', 'Alle projektets clips — klik: åbn i editoren · dobbeltklik: læg i første ledige slot');
-  const byTrack = trackClipsAll();
-  if (!byTrack.length) {
+  const clipsBox = sec('CLIPS', 'Alle projektets musikalske idéer, grupperet pr. spor — klik: åbn i editoren · dobbeltklik: læg i første ledige slot i griddet');
+  let anyClips = false;
+  for (let tr2 = 0; tr2 < 8; tr2++) {
+    const mine = trackClips(tr2);
+    if (!mine.length) continue;
+    anyClips = true;
+    const h = document.createElement('div');
+    h.className = 'brTrkHead';
+    h.innerHTML = `<span class="brDot" style="background:${st.tracks[tr2].color}"></span>${st.tracks[tr2].name}`;
+    clipsBox.appendChild(h);
+    for (const [cid, c] of mine) {
+      const row = document.createElement('button');
+      row.className = 'brRow brFile';
+      row.innerHTML = `<span class="brDot" style="background:${c.color || st.tracks[c.tr].color}"></span>${c.name}${c.fa && c.fa.act && c.fa.act !== 'none' ? ' ⟳' : ''}`;
+      row.title = st.tracks[c.tr].name + ' · ' + clipLen(c) + ' steps — klik: åbn · dobbeltklik: læg i ledig slot';
+      row.onclick = () => { selectClip(cid, c.tr); renderSession(); };
+      row.ondblclick = () => {
+        let si = st.session.scenes.findIndex(sc => !sc.slots[c.tr]);
+        if (si < 0) { addScene(); si = st.session.scenes.length - 1; }
+        st.session.scenes[si].slots[c.tr] = cid;
+        persist(); selectClip(cid, c.tr, si); renderSession();
+      };
+      clipsBox.appendChild(row);
+    }
+  }
+  if (!anyClips) {
     const d = document.createElement('div');
     d.className = 'brEmpty';
     d.textContent = 'Ingen clips endnu';
     clipsBox.appendChild(d);
-  }
-  for (const [cid, c] of byTrack) {
-    const row = document.createElement('button');
-    row.className = 'brRow';
-    row.innerHTML = `<span class="brDot" style="background:${st.tracks[c.tr].color}"></span>${c.name}`;
-    row.title = st.tracks[c.tr].name + ' · ' + (clipLen(c)) + ' steps — klik: åbn · dobbeltklik: læg i ledig slot';
-    row.onclick = () => { selectClip(cid, c.tr); renderSession(); };
-    row.ondblclick = () => {
-      let si = st.session.scenes.findIndex(sc => !sc.slots[c.tr]);
-      if (si < 0) { addScene(); si = st.session.scenes.length - 1; }
-      st.session.scenes[si].slots[c.tr] = cid;
-      persist(); selectClip(cid, c.tr, si); renderSession();
-    };
-    clipsBox.appendChild(row);
   }
   // OPTAGELSER: klik = hoer · dobbeltklik = laeg i sangen ved startmarkoeren
   const recsBox = sec('🎙 OPTAGELSER', 'Dine stemme-optagelser — klik: hør · dobbeltklik: læg som audio-clip i sangen');
@@ -615,6 +630,8 @@ function slotMenu(ev, sceneIdx, tr) {
       if (nm && nm.trim()) { c.name = nm.trim().slice(0, 14); persist(); renderSession(); renderClipEditor(); }
     }]);
     items.push([c.dis ? '◉ AKTIVÉR (0)' : '◎ DEAKTIVÉR (0)', () => { c.dis = !c.dis; if (!c.dis) delete c.dis; persist(); renderSession(); }]);
+    items.push(['🎨 FARVE…', () => openColorPop(ev, c)]);
+    items.push(['⟳ FOLLOW ACTION…', () => openFaPop(ev, c)]);
     items.push(['✕ RYD SLOT (Delete)', () => { clearSlot(sceneIdx, tr); }]);
   } else {
     items.push(['+ NY CLIP', () => createClipInSlot(sceneIdx, tr)]);
@@ -658,6 +675,67 @@ function sceneMenu(ev, i) {
       gcClips(); persist(); renderSession();
     }],
   ]);
+}
+const CLIP_PALETTE = ['#ff3d5a', '#ff9f2e', '#ffd83d', '#c8ff2e', '#3dffc0', '#3db9ff', '#a06bff', '#ff5ad0', '#e0e0e0', '#8f8f8f'];
+function openColorPop(ev, c) {
+  closeMenus();
+  const pop = document.createElement('div');
+  pop.id = 'eucPop';
+  pop.innerHTML = '<div class="eucTitle">CLIP-FARVE</div><div class="colRow"></div><div class="eucBtns"><button id="colTrk">SPORFARVE</button><button id="colClose">LUK</button></div>';
+  const row = pop.querySelector('.colRow');
+  for (const col of CLIP_PALETTE) {
+    const b = document.createElement('button');
+    b.className = 'colSw';
+    b.style.background = col;
+    b.onclick = () => { c.color = col; persist(); renderSession(); renderBrowser(); pop.remove(); };
+    row.appendChild(b);
+  }
+  pop.querySelector('#colTrk').onclick = () => { delete c.color; persist(); renderSession(); renderBrowser(); pop.remove(); };
+  pop.querySelector('#colClose').onclick = () => pop.remove();
+  pop.style.left = Math.min(ev.clientX, innerWidth - 240) + 'px';
+  pop.style.top = Math.min(ev.clientY, innerHeight - 160) + 'px';
+  pop.onpointerdown = e2 => e2.stopPropagation();
+  document.body.appendChild(pop);
+}
+// FOLLOW ACTIONS (Ableton-manualen): clip'en skifter selv efter N gennemloeb
+function openFaPop(ev, c) {
+  closeMenus();
+  const pop = document.createElement('div');
+  pop.id = 'eucPop';
+  const fa = () => c.fa || { act: 'none', after: 4, chance: 1 };
+  pop.innerHTML = `<div class="eucTitle">⟳ FOLLOW ACTION · ${c.name}</div>
+    <div class="faRow" data-k="act"><span>HANDLING</span></div>
+    <div class="faRow" data-k="after"><span>EFTER</span></div>
+    <div class="faRow" data-k="chance"><span>CHANCE</span></div>
+    <div class="eucBtns"><button id="faClose">LUK</button></div>`;
+  const opts = {
+    act: [['none', 'INGEN'], ['next', 'NÆSTE ▼'], ['any', 'TILFÆLDIG'], ['first', 'FØRSTE'], ['stop', 'STOP']],
+    after: [[1, '1'], [2, '2'], [4, '4'], [8, '8']],
+    chance: [[0.25, '25%'], [0.5, '50%'], [0.75, '75%'], [1, '100%']],
+  };
+  const sync = () => {
+    for (const row of pop.querySelectorAll('.faRow')) {
+      const k = row.dataset.k;
+      row.querySelectorAll('button').forEach(b => b.remove());
+      for (const [v, lbl] of opts[k]) {
+        const b = document.createElement('button');
+        b.textContent = lbl;
+        b.className = fa()[k] === v ? 'on' : '';
+        b.onclick = () => {
+          c.fa = { ...fa(), [k]: v };
+          if (c.fa.act === 'none') delete c.fa;
+          persist(); sync(); renderSession(); renderBrowser();
+        };
+        row.appendChild(b);
+      }
+    }
+  };
+  pop.querySelector('#faClose').onclick = () => pop.remove();
+  pop.style.left = Math.min(ev.clientX, innerWidth - 300) + 'px';
+  pop.style.top = Math.min(ev.clientY, innerHeight - 220) + 'px';
+  pop.onpointerdown = e2 => e2.stopPropagation();
+  document.body.appendChild(pop);
+  sync();
 }
 let slotDrag = null;
 // lille drejeknap (Live-look): traek lodret for at skrue
@@ -735,8 +813,8 @@ function renderSession() {
         slot.classList.toggle('queued', queuedHere);
         slot.classList.toggle('dis', !!c.dis);
         slot.classList.toggle('edit', selClipId === id);
-        slot.style.setProperty('--cc', tr.color);
-        slot.innerHTML = `<span class="tri">${playingHere ? '▶' : '▷'}</span><span class="nm">${c.name}</span><span class="prog"></span>`;
+        slot.style.setProperty('--cc', c.color || tr.color);
+        slot.innerHTML = `<span class="tri">${playingHere ? '▶' : '▷'}</span><span class="nm">${c.name}</span>${c.fa && c.fa.act && c.fa.act !== 'none' ? '<span class="faBadge">⟳</span>' : ''}<span class="prog"></span>`;
         slot.title = `${c.name} — klik: start på næste takt · dobbeltklik: redigér · højreklik: menu`;
         slot.onpointerdown = ev => {
           if (ev.button !== 0) return;
@@ -1430,7 +1508,7 @@ function renderArr() {
     seg.style.left = xPct(c.at) + '%';
     seg.style.width = xPct(c.len) + '%';
     seg.style.top = (c.tr / 8 * 100) + '%';
-    seg.style.background = st.tracks[c.tr].color;
+    seg.style.background = (c.clip && st.clips[c.clip]?.color) || st.tracks[c.tr].color;
     mini.appendChild(seg);
   }
   const miniPh = document.createElement('div');
@@ -1586,7 +1664,7 @@ function renderArr() {
         elC.title = `${tr.name} · optagelse · ${c.len / BAR} takter`;
       } else {
         const src = st.clips[c.clip];
-        elC.style.background = tr.color;
+        elC.style.background = (src && src.color) || tr.color;
         const mk = src ? clipMarksURI(src, '#0b0b0d') : null;
         if (mk) {
           elC.style.backgroundImage = mk.uri;

@@ -630,6 +630,38 @@ export function liveOf(st) {
   }
   return st._live;
 }
+// FOLLOW ACTIONS: clips der selv skifter/stopper efter N gennemloeb (Ableton-manualen).
+// Koeres ved takt-graensen FOER applyQueued — brugerens egen koe vinder altid.
+export function applyFollowActions(st, absStep) {
+  const live = liveOf(st);
+  const scenes = (st.session && st.session.scenes) || [];
+  live.forEach((L, tr) => {
+    if (!L.play || L.next !== undefined) return;
+    const clip = st.clips[L.play];
+    if (!clip || !clip.fa || !clip.fa.act || clip.fa.act === 'none') return;
+    const rel = absStep - L.at;
+    if (rel <= 0 || rel % clip.len !== 0) return;
+    const loops = rel / clip.len;
+    if (loops % (clip.fa.after || 4) !== 0) return;
+    if (Math.random() > (clip.fa.chance ?? 1)) return;
+    const slots = scenes.map(sc => sc.slots[tr]);
+    const si = slots.indexOf(L.play);
+    const act = clip.fa.act;
+    let target = null;
+    if (act === 'stop') target = 'stop';
+    else if (act === 'first') target = slots.find(x => x) || null;
+    else if (act === 'any') {
+      const opts = slots.filter(x => x && x !== L.play);
+      target = opts.length ? opts[Math.floor(Math.random() * opts.length)] : null;
+    } else { // 'next' (nedad, wrapper) — spring slots med samme clip over
+      for (let k = 1; k <= slots.length; k++) {
+        const cand = slots[(si + k) % slots.length];
+        if (cand && cand !== L.play) { target = cand; break; }
+      }
+    }
+    if (target) L.next = target;
+  });
+}
 // anvend koeede launches/stops ved takt-graensen (launch-kvantisering = kernen i Ableton-foelelsen)
 export function applyQueued(st, absStep) {
   const live = liveOf(st);
@@ -844,7 +876,10 @@ export class Player {
         // ----- JAM (session): hvert spor spiller sin launched clip, koeer anvendes pr. takt -----
         this.curBpm = st.bpm;
         const stepDur = 60 / st.bpm / 4;
-        if (this.absStep % BAR === 0) applyQueued(st, this.absStep);
+        if (this.absStep % BAR === 0) {
+          applyFollowActions(st, this.absStep);
+          applyQueued(st, this.absStep);
+        }
         const swingOff = (this.absStep % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
         schedJamStep(this.rig, st, this.absStep, this.nextTime + swingOff, stepDur, this.lastFreqs);
         this.stepLog.push({ t: this.nextTime, step: this.absStep % BAR, abs: this.absStep, pattern: null, songStep: null, jam: true });

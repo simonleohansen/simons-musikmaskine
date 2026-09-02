@@ -741,3 +741,10 @@ input[type="range"] { accent-color: #4a4a4a; }
 .brFile { padding-left: 16px; }
 .smpRow .smpName { flex: 1; font-size: 9px; font-weight: 800; color: var(--amber); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .smpRow .smpX { padding: 1px 5px; font-size: 9px; }
+.brTrkHead { display: flex; align-items: center; gap: 5px; font-size: 9px; font-weight: 900; color: var(--dim); padding: 4px 4px 1px; letter-spacing: 0.06em; }
+.slot .faBadge { font-size: 8px; color: #0b0b0d; opacity: 0.85; margin-left: auto; }
+.colRow { display: flex; gap: 4px; flex-wrap: wrap; }
+.colSw { width: 20px; height: 20px; padding: 0; border: 1px solid #00000066; border-radius: 3px; }
+.faRow { display: flex; align-items: center; gap: 3px; }
+.faRow span { font-size: 8px; font-weight: 800; color: var(--dim); flex: 0 0 52px; }
+.faRow button { padding: 3px 6px; font-size: 8px; font-weight: 800; }
