@@ -309,7 +309,8 @@ export function trig(rig, trIdx, patch, step, t, st, glideFrom = null, stepDur =
   const mix = ctx.createGain();
   mix.gain.value = 1;
   const freqParams = [];
-  if ((p.wave ?? 'saw') !== 'noise') {
+  const usedSample = p.smp ? smpSource(ctx, p, midi, t, stopT, mix, driftC) : false;
+  if (!usedSample && (p.wave ?? 'saw') !== 'noise') {
     const o = ctx.createOscillator();
     o.type = OSC_TYPES[p.wave] || 'sawtooth';
     o.frequency.value = f;
@@ -338,12 +339,12 @@ export function trig(rig, trIdx, patch, step, t, st, glideFrom = null, stepDur =
     o2.connect(g2); g2.connect(mix);
     freqParams.push({ fp: o2.frequency, mul: mul2 });
   }
-  if ((p.noise ?? 0) > 0.02 || p.wave === 'noise') {
+  if ((p.noise ?? 0) > 0.02 || (!usedSample && p.wave === 'noise')) {
     const ns = ctx.createBufferSource();
     ns.buffer = noiseBuf(ctx); ns.loop = true;
     ns.start(t); ns.stop(stopT);
     const ng = ctx.createGain();
-    ng.gain.value = p.wave === 'noise' ? 1 : p.noise;
+    ng.gain.value = (!usedSample && p.wave === 'noise') ? 1 : p.noise;
     ns.connect(ng); ng.connect(mix);
   }
   // glide (portamento) — fra forrige tone paa sporet
@@ -447,6 +448,40 @@ export function trig(rig, trIdx, patch, step, t, st, glideFrom = null, stepDur =
   return f;
 }
 
+// ---------- sample-bibliotek (patch.smp = url; spiller gennem hele voice-kaeden) ----------
+export const sampleBuffers = new Map();
+let sampleDecodeCtx = null;
+export async function loadSample(url) {
+  if (sampleBuffers.has(url)) return sampleBuffers.get(url);
+  if (!sampleDecodeCtx) sampleDecodeCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const ab = await (await fetch(url)).arrayBuffer();
+  const buf = await sampleDecodeCtx.decodeAudioData(ab);
+  sampleBuffers.set(url, buf);
+  return buf;
+}
+// forudindlaes alle samples et projekt bruger (spor-patches) — kraeves foer offline eksport
+export async function preloadSamples(st) {
+  const urls = new Set();
+  for (const tr of st.tracks) if (tr.patch.smp) urls.add(tr.patch.smp);
+  for (const c of Object.values(st.clips || {})) {
+    for (const s of c.steps || []) if (s?.l?.smp) urls.add(s.l.smp);
+  }
+  await Promise.all([...urls].map(u => loadSample(u).catch(() => {})));
+}
+// byg sample-kilde i en voice: pitch via playbackRate, drift via detune
+function smpSource(ctx, p, midi, t, stopT, mix, driftC) {
+  const buf = sampleBuffers.get(p.smp);
+  if (!buf) return false;
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.playbackRate.value = Math.pow(2, (midi - (p.note ?? 48)) / 12);
+  if (driftC) src.detune.value = (Math.random() * 2 - 1) * driftC;
+  src.start(t);
+  src.stop(stopT);
+  src.connect(mix);
+  return true;
+}
+
 // ---------- live MIDI-stemme (holdes til noteOff) ----------
 export function liveVoice(rig, trIdx, p, midi, vel = 1) {
   const ctx = rig.ctx;
@@ -462,7 +497,17 @@ export function liveVoice(rig, trIdx, p, midi, vel = 1) {
   const sources = [];
   const mix = ctx.createGain();
   mix.gain.value = 1;
-  if ((p.wave ?? 'saw') !== 'noise') {
+  let liveUsedSample = false;
+  if (p.smp && sampleBuffers.has(p.smp)) {
+    const sb = ctx.createBufferSource();
+    sb.buffer = sampleBuffers.get(p.smp);
+    sb.playbackRate.value = Math.pow(2, (midi - (p.note ?? 48)) / 12);
+    sb.start(t); sb.stop(hardStop);
+    sb.connect(mix);
+    sources.push(sb);
+    liveUsedSample = true;
+  }
+  if (!liveUsedSample && (p.wave ?? 'saw') !== 'noise') {
     const o = ctx.createOscillator();
     o.type = { saw: 'sawtooth', sqr: 'square', tri: 'triangle', sin: 'sine' }[p.wave] || 'sawtooth';
     o.frequency.value = f;
@@ -489,12 +534,12 @@ export function liveVoice(rig, trIdx, p, midi, vel = 1) {
     o2.connect(g2); g2.connect(mix);
     sources.push(o2);
   }
-  if ((p.noise ?? 0) > 0.02 || p.wave === 'noise') {
+  if ((p.noise ?? 0) > 0.02 || (!liveUsedSample && p.wave === 'noise')) {
     const ns = ctx.createBufferSource();
     ns.buffer = noiseBuf(ctx); ns.loop = true;
     ns.start(t); ns.stop(hardStop);
     const ng = ctx.createGain();
-    ng.gain.value = p.wave === 'noise' ? 1 : p.noise;
+    ng.gain.value = (!liveUsedSample && p.wave === 'noise') ? 1 : p.noise;
     ns.connect(ng); ng.connect(mix);
     sources.push(ns);
   }

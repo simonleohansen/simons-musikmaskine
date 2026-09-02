@@ -2,9 +2,9 @@
 // JAM (Session View): spor = kolonner, clips = launchbare celler, scener = rækker.
 // Ét klik = start (kvantiseret til næste takt, blinker i kø). Clips redigeres MENS de looper.
 // SANG (Arrangement): frie clips på tidslinjen. Tab skifter view; det du ser, er det du hører.
-import { Player, renderWav, noteName, cutHz, songEntry, entrySteps, emptyArr, arrLenSteps, tempoAt, songDurationSec, BAR, recBuffers, registerRecBuffer, encodeWav, liveOf, clipLen } from './engine.js?v=12';
+import { Player, renderWav, noteName, cutHz, songEntry, entrySteps, emptyArr, arrLenSteps, tempoAt, songDurationSec, BAR, recBuffers, registerRecBuffer, encodeWav, liveOf, clipLen, sampleBuffers, loadSample, preloadSamples } from './engine.js?v=13';
 
-const APP_VER = 'v12';
+const APP_VER = 'v13';
 const $ = id => document.getElementById(id);
 const PATTERN_NAMES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 const TRACK_COLORS = ['#ff3d5a', '#ff9f2e', '#ffd83d', '#c8ff2e', '#3dffc0', '#3db9ff', '#a06bff', '#ff5ad0'];
@@ -222,9 +222,45 @@ const player = new Player(() => st);
 let saveTimer = null;
 const NO_UNDERSCORE = (k, v) => (typeof k === 'string' && k.startsWith('_')) ? undefined : v;
 function snapshot(x) { return JSON.parse(JSON.stringify(x, NO_UNDERSCORE)); }
+const undoStack = [], redoStack = [];
+let lastSnap = JSON.stringify(st, NO_UNDERSCORE);
 function persist() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => localStorage.setItem('simon-project-v1', JSON.stringify(st, NO_UNDERSCORE)), 300);
+  saveTimer = setTimeout(() => {
+    const now = JSON.stringify(st, NO_UNDERSCORE);
+    if (now !== lastSnap) {
+      undoStack.push(lastSnap);
+      if (undoStack.length > 60) undoStack.shift();
+      redoStack.length = 0;
+      lastSnap = now;
+    }
+    localStorage.setItem('simon-project-v1', now);
+  }, 300);
+}
+function historyJump(toSnap) {
+  st = migrate(JSON.parse(toSnap)) || st;
+  lastSnap = JSON.stringify(st, NO_UNDERSCORE);
+  localStorage.setItem('simon-project-v1', lastSnap);
+  if (selClipId && !st.clips[selClipId]) { selClipId = null; lockSel = null; }
+  if (selArrClip && !st.arr.clips.some(c => c.id === selArrClip)) selArrClip = null;
+  selScene = Math.min(selScene, st.session.scenes.length - 1);
+  gridSel.scene = Math.min(gridSel.scene, st.session.scenes.length - 1);
+  syncTop(); renderAll();
+}
+function doUndo() {
+  clearTimeout(saveTimer);
+  const now = JSON.stringify(st, NO_UNDERSCORE);
+  if (now !== lastSnap) { undoStack.push(lastSnap); lastSnap = now; } // uafsluttet aendring med i historikken
+  if (!undoStack.length) { toast('Intet at fortryde'); return; }
+  redoStack.push(JSON.stringify(st, NO_UNDERSCORE));
+  historyJump(undoStack.pop());
+  toast('↩ Fortrudt (' + undoStack.length + ' tilbage)');
+}
+function doRedo() {
+  if (!redoStack.length) { toast('Intet at gendanne'); return; }
+  undoStack.push(JSON.stringify(st, NO_UNDERSCORE));
+  historyJump(redoStack.pop());
+  toast('↪ Gendannet');
 }
 function toast(msg, err = false) {
   const t = $('toast');
@@ -283,6 +319,9 @@ const KITS = [
     ['KICK', 0], ['SNARE', 3], ['LOFI PERC', 16], ['HAT O', 5], ['303', 7], ['DUB STAB', 11], ['PERC', 14], ['DRONE', 18]] },
 ];
 let browserOpen = true;
+let sampleManifest = null;
+const openFolders = new Set();
+fetch('samples/manifest.json').then(r => r.json()).then(m => { sampleManifest = m; renderBrowser(); }).catch(() => {});
 let presetDrag = null;
 function loadPresetOnTrack(pi, tr) {
   st.tracks[tr].patch = { ...PRESETS[pi].p };
@@ -365,6 +404,52 @@ function renderBrowser() {
     };
     kits.appendChild(row);
   });
+  // SAMPLES: rigtige lyde fra samples/-mapperne — klik = hoer · dobbeltklik = laeg paa valgt spor
+  if (sampleManifest) {
+    const sbox = sec('SAMPLES', 'Rigtige lyde (CC0) i mapper — klik: hør · dobbeltklik: læg på det valgte spor (pitches af steps/MIDI)');
+    for (const [folder, files] of Object.entries(sampleManifest)) {
+      const fRow = document.createElement('button');
+      fRow.className = 'brRow brFolder';
+      fRow.innerHTML = `<span class="brIco">${openFolders.has(folder) ? '▼' : '▶'}</span>${folder} <i>${files.length}</i>`;
+      fRow.onclick = () => {
+        if (openFolders.has(folder)) openFolders.delete(folder); else openFolders.add(folder);
+        renderBrowser();
+      };
+      sbox.appendChild(fRow);
+      if (!openFolders.has(folder)) continue;
+      for (const f of files) {
+        const url = 'samples/' + folder + '/' + f;
+        const nm = f.replace(/\.(flac|wav)$/, '').replace(/_/g, ' ');
+        const row = document.createElement('button');
+        row.className = 'brRow brFile';
+        row.innerHTML = `<span class="brIco">♪</span>${nm}`;
+        row.title = 'Klik: hør · dobbeltklik: læg samplen på ' + st.tracks[curTrack].name;
+        row.onclick = async () => {
+          try {
+            const buf = await loadSample(url);
+            const ctx = player.ensureCtx();
+            const s2 = ctx.createBufferSource();
+            s2.buffer = buf;
+            const g = ctx.createGain(); g.gain.value = 0.8;
+            s2.connect(g); g.connect(ctx.destination);
+            s2.start();
+          } catch (e2) { toast('Kunne ikke indlæse ' + nm, true); }
+        };
+        row.ondblclick = async () => {
+          try {
+            await loadSample(url);
+            const p = st.tracks[curTrack].patch;
+            p.smp = url;
+            st.tracks[curTrack].name = nm.toUpperCase().slice(0, 10);
+            persist(); renderSession(); renderPanel();
+            player.audition(curTrack);
+            toast('♪ ' + nm + ' på spor ' + (curTrack + 1) + ' — steps/MIDI pitcher den, filter/env/duck virker');
+          } catch (e2) { toast('Kunne ikke indlæse ' + nm, true); }
+        };
+        sbox.appendChild(row);
+      }
+    }
+  }
   // CLIPS: alle projektets clips — klik = vaelg/redigér · dobbeltklik = laeg i ledig slot
   const clipsBox = sec('CLIPS', 'Alle projektets clips — klik: åbn i editoren · dobbeltklik: læg i første ledige slot');
   const byTrack = trackClipsAll();
@@ -1052,6 +1137,15 @@ function renderPanel() {
     g.appendChild(optsRow('ldstRow', [null, '1:2', '2:2', '1:4', '4:4', 'fill', '!fill'],
       ['—', '1:2', '2:2', '1:4', '4:4', 'FILL', '!FILL'],
       () => ls.c ?? null, v => { if (!v) delete ls.c; else ls.c = v; persist(); renderClipEditor(); }));
+  }
+  if (curPatch().smp) {
+    const g = grp('OSC');
+    const row = document.createElement('div');
+    row.className = 'prow smpRow';
+    const nm = decodeURIComponent(curPatch().smp.split('/').pop()).replace(/\.(flac|wav)$/, '');
+    row.innerHTML = `<span class="plabel">SAMPLE</span><b class="smpName">♪ ${nm}</b><button class="smpX" title="Fjern samplen — tilbage til synth-oscillatorerne">✕</button>`;
+    row.querySelector('.smpX').onclick = () => { delete curPatch().smp; persist(); renderPanel(); };
+    g.appendChild(row);
   }
   for (const d of PDEF) {
     const g = grp(d.g);
@@ -1749,6 +1843,11 @@ window.addEventListener('keydown', e => {
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); return; }
   if (e.key === 'Tab') { e.preventDefault(); toggleView(); return; }
   if (e.key === 'Escape') { if (lockSel) { lockSel = null; renderClipEditor(); renderPanel(); } closeMenus(); return; }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+    e.preventDefault();
+    if (e.shiftKey) doRedo(); else doUndo();
+    return;
+  }
   if ((e.key === 'f' || e.key === 'F') && !e.repeat) { setFill(true); return; }
   if (e.shiftKey && /^Digit[1-8]$/.test(e.code)) {
     const i = +e.code.slice(5) - 1;
@@ -2293,6 +2392,7 @@ $('exportBtn').onclick = async () => {
   btn.textContent = 'RENDERER…';
   try {
     const what = (curView === 'arr' && st.arr.clips.length) ? 'song' : 'scene';
+    await preloadSamples(st);
     const wav = await renderWav(st, what, selScene);
     const name = ($('projName').value || '').trim() || 'Simons Track';
     let saved = false;
@@ -2339,6 +2439,7 @@ function renderAll() {
   renderPanel();
   renderClipEditor();
 }
+preloadSamples(st).then(() => {});
 window.__simon = { st: () => st, player, live, midiTest: { midiNoteOn, midiNoteOff, captureMidi, setRec: v => { midiRecOn = v; } } };
 $('verTag').textContent = APP_VER;
 // aabn med foerste scenes foerste clip valgt, saa editoren aldrig er tom

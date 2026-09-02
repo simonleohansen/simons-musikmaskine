@@ -736,3 +736,8 @@ input[type="range"] { accent-color: #4a4a4a; }
 .slot.has .nm, .slot.has .tri { text-shadow: none; }
 #autoBtn { height: 34px; font-weight: 800; color: var(--dim); }
 #autoBtn.on { color: #fff; background: var(--hot); border-color: var(--hot); animation: queueBlink 0.8s steps(2) infinite; }
+.brFolder { font-weight: 800; color: var(--dim); }
+.brFolder i { font-style: normal; font-size: 8px; color: #5a5a5a; margin-left: auto; }
+.brFile { padding-left: 16px; }
+.smpRow .smpName { flex: 1; font-size: 9px; font-weight: 800; color: var(--amber); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.smpRow .smpX { padding: 1px 5px; font-size: 9px; }
