@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Simons Musikmaskine</title>
-<link rel="stylesheet" href="style.css?v=14">
+<link rel="stylesheet" href="style.css?v=15">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%230b0b0d'/><text x='50' y='72' font-size='58' text-anchor='middle' fill='%23c8ff2e' font-family='monospace' font-weight='bold'>S</text></svg>">
 </head>
 <body>
@@ -53,12 +53,28 @@
 
 <footer id="soundPanel">
   <div id="clipBar" hidden>
-    <span id="cbTitle">CLIP</span>
-    <input id="cbName" maxlength="14" spellcheck="false" title="Clip-navn">
-    <button id="cbLen" title="Clip-længde: 1 eller 2 takter (×2)">16</button>
-    <span id="tlenBox" title="Polymeter: clip'ens egen loop-længde i steps">POLY <button id="tlenDec">−</button><b id="tlenVal">16</b><button id="tlenInc">+</button></span>
-    <button id="cbTools" title="Værktøjer: euclid, rotér, spejl, tilfældig, ryd">🎲</button>
-    <div id="clipSteps" title="Clip'ens steps — redigér mens den looper! Klik = tænd/sluk · shift = blødt · alt = chance · træk lodret = styrke · højreklik = step-lås"></div>
+    <div id="cbHead">
+      <span id="cbTitle">CLIP</span>
+      <input id="cbName" maxlength="14" spellcheck="false" title="Clip-navn">
+      <button id="cbLen" title="Clip-længde: 1 eller 2 takter">16</button>
+      <span id="tlenBox" title="Polymeter: clip'ens egen loop-længde i steps">POLY <button id="tlenDec">−</button><b id="tlenVal">16</b><button id="tlenInc">+</button></span>
+      <button id="cbX2" title="×2: kopiér indholdet og gør clip'en dobbelt så lang (som i Live)">×2</button>
+      <button id="cbRev" title="Spejlvend rækkefølgen">REV</button>
+      <button id="cbDup" title="Duplikér clip'en til slotten nedenunder (cmd+D)">DUP</button>
+      <button id="cbTools" title="Værktøjer: euclid, rotér, spejl, tilfældig, ryd">🎲</button>
+      <span class="cbSpacer"></span>
+      <button id="rollFoldB" title="FOLD: vis kun rækker med toner (som i Ableton)">FOLD</button>
+      <button id="rollUp" title="Rul tonevinduet op (højere toner)">▲</button>
+      <button id="rollDown" title="Rul tonevinduet ned (dybere toner)">▼</button>
+    </div>
+    <div id="clipRoll">
+      <div id="rollLabels"></div>
+      <div id="clipSteps" title="Piano-rullen — redigér mens den looper! Klik = tænd/sluk tone (flere toner oven på hinanden = akkord) · shift = blødt · alt = chance · højreklik = step-lås"></div>
+    </div>
+    <div id="velLane">
+      <span id="velLbl" title="Anslagsstyrke pr. step — træk lodret på stolperne">VEL</span>
+      <div id="velStems"></div>
+    </div>
   </div>
   <div id="spHead">
     <span id="spTrack">—</span>
@@ -71,6 +87,6 @@
 <div id="toast" hidden></div>
 <div id="projList" hidden><div id="projBox"><div id="projHead">PROJEKTER <button id="projClose">✕</button></div><div id="projItems"></div></div></div>
 
-<script type="module" src="app.js?v=14"></script>
+<script type="module" src="app.js?v=15"></script>
 </body>
 </html>

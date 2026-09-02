@@ -2,9 +2,9 @@
 // JAM (Session View): spor = kolonner, clips = launchbare celler, scener = rækker.
 // Ét klik = start (kvantiseret til næste takt, blinker i kø). Clips redigeres MENS de looper.
 // SANG (Arrangement): frie clips på tidslinjen. Tab skifter view; det du ser, er det du hører.
-import { Player, renderWav, noteName, cutHz, songEntry, entrySteps, emptyArr, arrLenSteps, tempoAt, songDurationSec, BAR, recBuffers, registerRecBuffer, encodeWav, liveOf, clipLen, sampleBuffers, loadSample, preloadSamples } from './engine.js?v=14';
+import { Player, renderWav, noteName, stepNotes, cutHz, songEntry, entrySteps, emptyArr, arrLenSteps, tempoAt, songDurationSec, BAR, recBuffers, registerRecBuffer, encodeWav, liveOf, clipLen, sampleBuffers, loadSample, preloadSamples } from './engine.js?v=15';
 
-const APP_VER = 'v14';
+const APP_VER = 'v15';
 const $ = id => document.getElementById(id);
 const PATTERN_NAMES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 const TRACK_COLORS = ['#ff3d5a', '#ff9f2e', '#ffd83d', '#c8ff2e', '#3dffc0', '#3db9ff', '#a06bff', '#ff5ad0'];
@@ -63,25 +63,25 @@ function patch(over) {
     pan: 0, duck: 0, choke: 0, sendD: 0, sendV: 0, ...over };
 }
 const PRESETS = [
-  { n: 'KICK', p: patch({ wave: 'sin', note: 36, penv: 30, pdec: 0.055, dec: 0.34, drive: 0.55, cut: 0.85 }) },
-  { n: 'KICK RUMBLE', p: patch({ wave: 'sin', note: 34, penv: 26, pdec: 0.07, dec: 0.6, drive: 0.75, cut: 0.5, sendV: 0.25 }) },
-  { n: 'CLAP', p: patch({ wave: 'noise', dec: 0.22, ftype: 'bp', cut: 0.68, res: 0.35, att: 0.008, sendV: 0.18 }) },
-  { n: 'SNARE', p: patch({ wave: 'noise', note: 55, noise: 1, dec: 0.16, cut: 0.75, penv: 10, pdec: 0.05 }) },
-  { n: 'HAT C', p: patch({ wave: 'noise', dec: 0.05, ftype: 'hp', cut: 0.8, res: 0.2, choke: 1 }) },
-  { n: 'HAT O', p: patch({ wave: 'noise', dec: 0.32, ftype: 'hp', cut: 0.78, res: 0.2, choke: 1 }) },
-  { n: 'RIDE', p: patch({ wave: 'noise', dec: 0.5, ftype: 'hp', cut: 0.85, res: 0.55, sendV: 0.12 }) },
-  { n: '303 BASS', p: patch({ wave: 'saw', note: 36, glide: 0.35, dec: 0.24, cut: 0.3, res: 0.62, fenv: 0.5, fdec: 0.18, drive: 0.3, duck: 0.45 }) },
-  { n: 'SUB BASS', p: patch({ wave: 'sin', note: 33, sub: 0.6, dec: 0.4, cut: 0.5, duck: 0.5 }) },
-  { n: 'RAVE STAB', p: patch({ wave: 'saw', note: 60, wave2: 'saw', semi2: 12, det2: 14, mix2: 0.6, dec: 0.22, cut: 0.6, res: 0.3, fenv: 0.45, fdec: 0.12, sendD: 0.35, sendV: 0.2, duck: 0.35 }) },
-  { n: 'HOOVER', p: patch({ wave: 'saw', note: 48, wave2: 'saw', semi2: 0, det2: 22, mix2: 1, sub: 0.35, drift: 0.4, sus: 0.6, rel: 0.3, gate: 2, dec: 0.15, cut: 0.5, res: 0.2, drive: 0.25, duck: 0.4 }) },
-  { n: 'DUB STAB', p: patch({ wave: 'sqr', note: 57, wave2: 'sqr', semi2: 7, mix2: 0.5, dec: 0.28, cut: 0.42, res: 0.3, sendD: 0.55, sendV: 0.25, duck: 0.35 }) },
-  { n: 'ACID LEAD', p: patch({ wave: 'sqr', note: 60, glide: 0.25, dec: 0.18, cut: 0.35, res: 0.7, fenv: 0.6, fdec: 0.1, sendD: 0.4 }) },
-  { n: 'BLEEP', p: patch({ wave: 'sin', note: 84, dec: 0.09, sendD: 0.5 }) },
-  { n: 'PERC', p: patch({ wave: 'tri', note: 74, penv: 14, pdec: 0.03, dec: 0.09, sendD: 0.3 }) },
-  { n: 'ZAP', p: patch({ wave: 'saw', note: 70, penv: 36, pdec: 0.09, dec: 0.12, drive: 0.4 }) },
-  { n: 'LOFI PERC', p: patch({ wave: 'tri', note: 65, penv: 10, pdec: 0.04, dec: 0.12, crush: 0.55, down: 0.4, sendD: 0.3 }) },
-  { n: 'NOISE SWEEP', p: patch({ wave: 'noise', att: 0.25, dec: 1.3, ftype: 'bp', cut: 0.55, res: 0.5, fenv: 0.8, fdec: 1.1, sendV: 0.45, duck: 0.3 }) },
-  { n: 'DRONE', p: patch({ wave: 'saw', note: 36, sub: 0.4, drift: 0.3, att: 0.1, dec: 1.5, sus: 0.7, rel: 0.8, gate: 4, cut: 0.35, res: 0.4, lamt: 0.5, lrate: 0.8, ldst: 'cut', sendV: 0.3, duck: 0.5 }) },
+  { n: 'KICK', c: 'TROMMER', p: patch({ wave: 'sin', note: 36, penv: 30, pdec: 0.055, dec: 0.34, drive: 0.55, cut: 0.85 }) },
+  { n: 'KICK RUMBLE', c: 'TROMMER', p: patch({ wave: 'sin', note: 34, penv: 26, pdec: 0.07, dec: 0.6, drive: 0.75, cut: 0.5, sendV: 0.25 }) },
+  { n: 'CLAP', c: 'TROMMER', p: patch({ wave: 'noise', dec: 0.22, ftype: 'bp', cut: 0.68, res: 0.35, att: 0.008, sendV: 0.18 }) },
+  { n: 'SNARE', c: 'TROMMER', p: patch({ wave: 'noise', note: 55, noise: 1, dec: 0.16, cut: 0.75, penv: 10, pdec: 0.05 }) },
+  { n: 'HAT C', c: 'TROMMER', p: patch({ wave: 'noise', dec: 0.05, ftype: 'hp', cut: 0.8, res: 0.2, choke: 1 }) },
+  { n: 'HAT O', c: 'TROMMER', p: patch({ wave: 'noise', dec: 0.32, ftype: 'hp', cut: 0.78, res: 0.2, choke: 1 }) },
+  { n: 'RIDE', c: 'TROMMER', p: patch({ wave: 'noise', dec: 0.5, ftype: 'hp', cut: 0.85, res: 0.55, sendV: 0.12 }) },
+  { n: '303 BASS', c: 'BAS', p: patch({ wave: 'saw', note: 36, glide: 0.35, dec: 0.24, cut: 0.3, res: 0.62, fenv: 0.5, fdec: 0.18, drive: 0.3, duck: 0.45 }) },
+  { n: 'SUB BASS', c: 'BAS', p: patch({ wave: 'sin', note: 33, sub: 0.6, dec: 0.4, cut: 0.5, duck: 0.5 }) },
+  { n: 'RAVE STAB', c: 'SYNTH', p: patch({ wave: 'saw', note: 60, wave2: 'saw', semi2: 12, det2: 14, mix2: 0.6, dec: 0.22, cut: 0.6, res: 0.3, fenv: 0.45, fdec: 0.12, sendD: 0.35, sendV: 0.2, duck: 0.35 }) },
+  { n: 'HOOVER', c: 'SYNTH', p: patch({ wave: 'saw', note: 48, wave2: 'saw', semi2: 0, det2: 22, mix2: 1, sub: 0.35, drift: 0.4, sus: 0.6, rel: 0.3, gate: 2, dec: 0.15, cut: 0.5, res: 0.2, drive: 0.25, duck: 0.4 }) },
+  { n: 'DUB STAB', c: 'SYNTH', p: patch({ wave: 'sqr', note: 57, wave2: 'sqr', semi2: 7, mix2: 0.5, dec: 0.28, cut: 0.42, res: 0.3, sendD: 0.55, sendV: 0.25, duck: 0.35 }) },
+  { n: 'ACID LEAD', c: 'SYNTH', p: patch({ wave: 'sqr', note: 60, glide: 0.25, dec: 0.18, cut: 0.35, res: 0.7, fenv: 0.6, fdec: 0.1, sendD: 0.4 }) },
+  { n: 'BLEEP', c: 'SYNTH', p: patch({ wave: 'sin', note: 84, dec: 0.09, sendD: 0.5 }) },
+  { n: 'PERC', c: 'TROMMER', p: patch({ wave: 'tri', note: 74, penv: 14, pdec: 0.03, dec: 0.09, sendD: 0.3 }) },
+  { n: 'ZAP', c: 'FX', p: patch({ wave: 'saw', note: 70, penv: 36, pdec: 0.09, dec: 0.12, drive: 0.4 }) },
+  { n: 'LOFI PERC', c: 'TROMMER', p: patch({ wave: 'tri', note: 65, penv: 10, pdec: 0.04, dec: 0.12, crush: 0.55, down: 0.4, sendD: 0.3 }) },
+  { n: 'NOISE SWEEP', c: 'FX', p: patch({ wave: 'noise', att: 0.25, dec: 1.3, ftype: 'bp', cut: 0.55, res: 0.5, fenv: 0.8, fdec: 1.1, sendV: 0.45, duck: 0.3 }) },
+  { n: 'DRONE', c: 'FX', p: patch({ wave: 'saw', note: 36, sub: 0.4, drift: 0.3, att: 0.1, dec: 1.5, sus: 0.7, rel: 0.8, gate: 4, cut: 0.35, res: 0.4, lamt: 0.5, lrate: 0.8, ldst: 'cut', sendV: 0.3, duck: 0.5 }) },
 ];
 
 // ---------- default-projekt: 3 scener klar til at spille (sparsom → fuld → break) ----------
@@ -359,7 +359,13 @@ function renderBrowser() {
   };
   // LYDE: klik = hoer paa valgt spor · dobbeltklik = indlaes · traek til en spor-kolonne
   const sounds = sec('SYNTHS', 'Lyde maskinen SELV laver (indstillinger til synthen — kan skrues på bagefter). Klik: hør · dobbeltklik: læg på valgt spor · træk til et spor');
+  ['TROMMER', 'BAS', 'SYNTH', 'FX'].forEach(cat => {
+  const ch = document.createElement('div');
+  ch.className = 'brCat';
+  ch.textContent = cat;
+  sounds.appendChild(ch);
   PRESETS.forEach((pr, pi) => {
+    if ((pr.c || 'SYNTH') !== cat) return;
     const row = document.createElement('button');
     row.className = 'brRow';
     row.innerHTML = `<span class="brIco">◈</span>${pr.n}`;
@@ -391,6 +397,7 @@ function renderBrowser() {
       if (d.moved && d.target != null && d.target < 8) loadPresetOnTrack(d.pi, d.target);
     };
     sounds.appendChild(row);
+  });
   });
   // KITS: dobbeltklik = indlaes alle 8 spor
   const kits = sec('KITS', 'Hele lydpakker: 8 sammenhørende synth-lyde, én pr. spor. Dobbeltklik skifter ALLE 8 spors lyde på én gang — dine clips/steps røres ikke, de spiller videre med de nye lyde');
@@ -908,7 +915,13 @@ function renderSession() {
       persist(); player.refreshTrackGains();
     };
     const kpan = knobEl(() => ((tr.patch.pan ?? 0) + 1) / 2, v => { tr.patch.pan = Math.round((v * 2 - 1) * 100) / 100; }, 'Pan', 18);
-    volRow.append(db, fader, kpan);
+    const frow = document.createElement('div');
+    frow.className = 'mxFRow';
+    const meter = document.createElement('div');
+    meter.className = 'mxMeter';
+    meter.innerHTML = '<div class="mxLv"></div>';
+    frow.append(fader, meter);
+    volRow.append(db, frow, kpan);
     mc.appendChild(volRow);
     const btns = document.createElement('div');
     btns.className = 'mxBtns';
@@ -961,12 +974,42 @@ function renderSession() {
   renderBrowser();
 }
 
-// ---------- CLIP-EDITOR (bunden — redigér mens den looper) ----------
+// ---------- CLIP-EDITOR (piano-rulle som i Live — redigér mens den looper) ----------
 function curClip() { return selClipId ? st.clips[selClipId] : null; }
 const PROB_CYCLE = { 1: 0.75, 0.75: 0.5, 0.5: 0.25, 0.25: 1 };
-const PROB_CHAR = p => (p >= 0.75 ? '¾' : p >= 0.5 ? '½' : '¼');
+const PROB_CHAR = p => (p >= 0.75 ? '\u00be' : p >= 0.5 ? '\u00bd' : '\u00bc');
 const COND_TAG = { fill: 'F', '!fill': '!F' };
 let velDrag = null, suppressClick = false;
+let rollFold = false;
+const rollTops = {}; // pr. clip: oeverste tone-offset i rullen
+const ROLL_ROWS = 8;
+const notesOf = stp => (stp?.on ? stepNotes(stp) : []);
+function setStepNotesOn(c, s, set, soft) {
+  if (!set.length) {
+    c.steps[s] = null;
+    if (lockSel && lockSel.step === s) lockSel = null;
+    return;
+  }
+  set = [...new Set(set)].sort((a, b) => a - b);
+  const base = c.steps[s]?.on ? c.steps[s] : stepOn(soft ? 0.55 : 1);
+  base.on = true;
+  base.n = set[0];
+  if (set.length > 1) base.ns = set.slice(1); else delete base.ns;
+  c.steps[s] = base;
+}
+function rollRows(c) {
+  const L = clipLen(c);
+  const used = new Set();
+  for (let s = 0; s < L; s++) for (const n of notesOf(c.steps[s])) used.add(n);
+  if (rollFold && used.size) return [...used].sort((a, b) => b - a);
+  const hi = used.size ? Math.max(...used) : 0;
+  let top = rollTops[selClipId] ?? Math.min(24, hi + 1);
+  top = Math.max(-24 + ROLL_ROWS - 1, Math.min(24, top));
+  rollTops[selClipId] = top;
+  const rows = [];
+  for (let i = 0; i < ROLL_ROWS; i++) rows.push(top - i);
+  return rows;
+}
 function renderClipEditor() {
   const bar = $('clipBar');
   const c = curClip();
@@ -978,75 +1021,130 @@ function renderClipEditor() {
   $('cbLen').textContent = c.len;
   $('tlenVal').textContent = clipLen(c);
   $('tlenBox').classList.toggle('custom', !!(c.tlen && c.tlen !== c.len));
+  $('rollFoldB').classList.toggle('on', rollFold);
   const holder = $('clipSteps');
-  holder.innerHTML = '';
+  const labels = $('rollLabels');
+  const stems = $('velStems');
+  holder.innerHTML = ''; labels.innerHTML = ''; stems.innerHTML = '';
   const L = clipLen(c);
   const col = st.tracks[c.tr].color;
-  for (let s = 0; s < L; s++) {
-    const b = document.createElement('button');
-    const step = c.steps[s];
-    b.className = 'stp' + (s % 4 === 0 ? ' q' : '') + (step?.on ? ' on' : '')
-      + (step?.on && (step.r ?? 1) > 1 ? ' r' + Math.min(4, step.r) : '')
-      + (lockSel && lockSel.step === s ? ' locksel' : '');
-    b.style.setProperty('--trkcol', col);
-    if (step?.on) {
-      b.style.opacity = 0.4 + 0.6 * (step.v ?? 1);
-      if (step.l) b.innerHTML += '<span class="lockdot"></span>';
-      if (step.n) b.innerHTML += `<span class="noteTag">${step.n > 0 ? '+' + step.n : step.n}</span>`;
-      if ((step.p ?? 1) < 1) b.innerHTML += `<span class="pTag">${PROB_CHAR(step.p)}</span>`;
-      if (step.c) b.innerHTML += `<span class="condTag">${COND_TAG[step.c] || step.c}</span>`;
+  const baseNote = st.tracks[c.tr].patch.note ?? 48;
+  const rows = rollRows(c);
+  holder.style.gridTemplateColumns = `repeat(${L}, 1fr)`;
+  holder.style.gridTemplateRows = `repeat(${rows.length}, 1fr)`;
+  labels.style.gridTemplateRows = `repeat(${rows.length}, 1fr)`;
+  stems.style.gridTemplateColumns = `repeat(${L}, 1fr)`;
+  for (const off of rows) {
+    const lb = document.createElement('div');
+    lb.className = 'rollLbl' + (off === 0 ? ' root' : '');
+    lb.textContent = noteName(baseNote + off);
+    lb.title = off === 0 ? 'Sporets grundtone' : (off > 0 ? '+' + off : '' + off) + ' halvtoner';
+    labels.appendChild(lb);
+  }
+  for (const off of rows) {
+    for (let s = 0; s < L; s++) {
+      const step = c.steps[s];
+      const on = notesOf(step).includes(off);
+      const b = document.createElement('button');
+      b.className = 'stp rollCell' + (s % 4 === 0 ? ' q' : '') + (off === 0 ? ' rootRow' : '')
+        + (on ? ' on' : '') + (on && (step.r ?? 1) > 1 ? ' r' + Math.min(4, step.r) : '')
+        + (lockSel && lockSel.step === s ? ' locksel' : '');
+      b.dataset.s = s;
+      b.style.setProperty('--trkcol', col);
+      if (on) {
+        b.style.opacity = 0.45 + 0.55 * (step.v ?? 1);
+        if (step.l) b.innerHTML += '<span class="lockdot"></span>';
+        if ((step.p ?? 1) < 1) b.innerHTML += `<span class="pTag">${PROB_CHAR(step.p)}</span>`;
+        if (step.c) b.innerHTML += `<span class="condTag">${COND_TAG[step.c] || step.c}</span>`;
+      }
+      b.onclick = e => {
+        if (suppressClick) { suppressClick = false; return; }
+        const stp = c.steps[s];
+        if (e.altKey && stp?.on) {
+          stp.p = PROB_CYCLE[stp.p ?? 1] ?? 1;
+          if (stp.p === 1) delete stp.p;
+          persist(); renderClipEditor(); return;
+        }
+        let set = notesOf(stp);
+        set = set.includes(off) ? set.filter(x => x !== off) : [...set, off];
+        setStepNotesOn(c, s, set, e.shiftKey);
+        persist(); renderClipEditor(); renderPanel(); renderSession();
+      };
+      b.oncontextmenu = e => {
+        e.preventDefault();
+        if (!c.steps[s]?.on) setStepNotesOn(c, s, [off]);
+        lockSel = { step: s };
+        persist(); renderClipEditor(); renderPanel();
+      };
+      holder.appendChild(b);
     }
-    b.onpointerdown = e => {
-      const stp = c.steps[s];
-      if (!stp?.on) return;
-      velDrag = { s, startY: e.clientY, startV: stp.v ?? 1, moved: false, btn: b };
-      try { b.setPointerCapture(e.pointerId); } catch (err) {}
+  }
+  // velocity-bane (som i Live): traek lodret paa en stolpe
+  for (let s = 0; s < L; s++) {
+    const step = c.steps[s];
+    const stem = document.createElement('div');
+    stem.className = 'velStem' + (s % 4 === 0 ? ' q' : '') + (step?.on ? '' : ' off');
+    stem.dataset.s = s;
+    stem.style.setProperty('--trkcol', col);
+    stem.innerHTML = `<div class="vf" style="height:${Math.round((step?.v ?? 1) * 100)}%"></div>`;
+    stem.title = 'Velocity (anslagsstyrke) — traek lodret';
+    stem.onpointerdown = e => {
+      if (!c.steps[s]?.on) return;
+      velDrag = { s, el: stem };
+      try { stem.setPointerCapture(e.pointerId); } catch (err) {}
+      dragVel(e, stem, c, s);
     };
-    b.onpointermove = e => {
-      if (!velDrag || velDrag.btn !== b) return;
-      const dy = velDrag.startY - e.clientY;
-      if (!velDrag.moved && Math.abs(dy) < 5) return;
-      velDrag.moved = true;
-      const stp = c.steps[velDrag.s];
-      if (!stp) return;
-      stp.v = Math.max(0.05, Math.min(1, velDrag.startV + dy / 90));
-      b.style.opacity = 0.4 + 0.6 * stp.v;
+    stem.onpointermove = e => { if (velDrag?.el === stem) dragVel(e, stem, c, s); };
+    const end = () => {
+      if (velDrag?.el === stem) { velDrag = null; persist(); renderClipEditor(); if (lockSel) renderPanel(); }
     };
-    const endDrag = () => {
-      if (velDrag?.btn === b) {
-        if (velDrag.moved) { suppressClick = true; persist(); if (lockSel) renderPanel(); }
-        velDrag = null;
-      }
-    };
-    b.onpointerup = endDrag;
-    b.onpointercancel = endDrag;
-    b.onclick = e => {
-      if (suppressClick) { suppressClick = false; return; }
-      const stp = c.steps[s];
-      if (e.altKey && stp?.on) {
-        stp.p = PROB_CYCLE[stp.p ?? 1] ?? 1;
-        if (stp.p === 1) delete stp.p;
-        persist(); renderClipEditor(); return;
-      }
-      if (e.shiftKey) {
-        c.steps[s] = stp?.on ? null : stepOn(0.55);
-      } else if (stp?.on) {
-        c.steps[s] = null;
-        if (lockSel && lockSel.step === s) lockSel = null;
-      } else {
-        c.steps[s] = stepOn();
-      }
-      persist(); renderClipEditor(); renderPanel(); renderSession();
-    };
-    b.oncontextmenu = e => {
-      e.preventDefault();
-      if (!c.steps[s]?.on) c.steps[s] = stepOn();
-      lockSel = { step: s };
-      persist(); renderClipEditor(); renderPanel();
-    };
-    holder.appendChild(b);
+    stem.onpointerup = end;
+    stem.onpointercancel = end;
+    stems.appendChild(stem);
   }
 }
+function dragVel(e, stem, c, s) {
+  const r = stem.getBoundingClientRect();
+  const v = Math.max(0.05, Math.min(1, 1 - (e.clientY - r.top) / r.height));
+  const stp = c.steps[s];
+  if (!stp) return;
+  stp.v = Math.round(v * 100) / 100;
+  stem.querySelector('.vf').style.height = Math.round(v * 100) + '%';
+  document.querySelectorAll(`#clipSteps .rollCell.on[data-s="${s}"]`).forEach(x => { x.style.opacity = 0.45 + 0.55 * v; });
+}
+$('rollFoldB').onclick = () => { rollFold = !rollFold; renderClipEditor(); };
+$('rollUp').onclick = () => rollNudge(1);
+$('rollDown').onclick = () => rollNudge(-1);
+function rollNudge(d) {
+  if (!curClip()) return;
+  rollFold = false;
+  rollTops[selClipId] = (rollTops[selClipId] ?? 1) + d;
+  renderClipEditor();
+}
+$('cbX2').onclick = () => {
+  const c = curClip();
+  if (!c) return;
+  if (c.len >= 32) { toast("Clip'en er allerede 2 takter (max)", true); return; }
+  for (let i = 0; i < 16; i++) c.steps[16 + i] = c.steps[i] ? JSON.parse(JSON.stringify(c.steps[i])) : null;
+  c.len = 32;
+  if (c.tlen && c.tlen <= 16) c.tlen = null;
+  persist(); renderClipEditor(); renderSession();
+  toast('\u00d72: indholdet kopieret til takt 2 \u2014 lav nu en variation dér');
+};
+$('cbRev').onclick = () => {
+  const c = curClip();
+  if (!c) return;
+  const L2 = clipLen(c);
+  const seg = c.steps.slice(0, L2).reverse();
+  for (let i = 0; i < L2; i++) c.steps[i] = seg[i];
+  persist(); renderClipEditor(); renderSession();
+};
+$('cbDup').onclick = () => {
+  const c = curClip();
+  if (!c) return;
+  const si = st.session.scenes.findIndex(sc => sc.slots[c.tr] === selClipId);
+  if (si >= 0) dupClipBelow(si, c.tr);
+};
 $('cbName').addEventListener('input', () => {
   const c = curClip();
   if (!c) return;
@@ -2212,7 +2310,14 @@ function recordMidiNote(midi, vel, abs) {
   } else {
     idx = 0;
   }
-  c.steps[idx] = { on: true, v: Math.max(0.1, vel), n: midi - base };
+  const off = midi - base;
+  const ex = c.steps[idx];
+  if (ex?.on && !notesOf(ex).includes(off)) {
+    setStepNotesOn(c, idx, [...notesOf(ex), off]); // akkord: flere toner paa samme step
+    c.steps[idx].v = Math.max(ex.v ?? 1, Math.max(0.1, vel));
+  } else {
+    c.steps[idx] = { on: true, v: Math.max(0.1, vel), n: off };
+  }
   persist();
   renderClipEditor();
 }
@@ -2321,9 +2426,35 @@ function jamCapture(pos) {
   $('jamBtn').textContent = `● OPTAGER (${Math.ceil(jam.atSteps / BAR)} takter)`;
 }
 
-// ---------- rAF: blink/progress/playhead ----------
+// ---------- rAF: blink/progress/playhead + meters ----------
 let lastLED = null;
+const meterBuf = new Uint8Array(256);
+const meterLv = new Array(8).fill(0);
+let metersHot = false;
+function tickMeters() {
+  const ans = player.rig?.analysers;
+  if (ans && player.playing) {
+    document.querySelectorAll('#sesMixer .mxLv').forEach((lv2, i) => {
+      const an = ans[i];
+      if (!an) return;
+      an.getByteTimeDomainData(meterBuf);
+      let pk = 0;
+      for (let j = 0; j < meterBuf.length; j++) {
+        const a = Math.abs(meterBuf[j] - 128) / 128;
+        if (a > pk) pk = a;
+      }
+      meterLv[i] = Math.max(pk, (meterLv[i] || 0) * 0.91);
+      lv2.style.height = Math.min(100, meterLv[i] * 125) + '%';
+    });
+    metersHot = true;
+  } else if (metersHot) {
+    metersHot = false;
+    meterLv.fill(0);
+    document.querySelectorAll('#sesMixer .mxLv').forEach(lv2 => { lv2.style.height = '0%'; });
+  }
+}
 function tick() {
+  tickMeters();
   const pos = player.position();
   if (pos) {
     if (pos.jam && curView === 'jam') {
@@ -2342,10 +2473,10 @@ function tick() {
       if (key !== lastLED) {
         lastLED = key;
         const c = curClip();
-        document.querySelectorAll('#clipSteps .stp.playcol').forEach(x => x.classList.remove('playcol'));
+        document.querySelectorAll('#clipBar .playcol').forEach(x => x.classList.remove('playcol'));
         if (c && L[c.tr] && L[c.tr].play === selClipId) {
           const idx = (pos.abs - L[c.tr].at) % clipLen(c);
-          $('clipSteps').children[idx]?.classList.add('playcol');
+          document.querySelectorAll(`#clipSteps [data-s="${idx}"], #velStems [data-s="${idx}"]`).forEach(x => x.classList.add('playcol'));
         }
         if (pos.abs % BAR === 0) renderSession(); // koeer blev anvendt paa takt-graensen
       }

@@ -748,3 +748,56 @@ input[type="range"] { accent-color: #4a4a4a; }
 .faRow { display: flex; align-items: center; gap: 3px; }
 .faRow span { font-size: 8px; font-weight: 800; color: var(--dim); flex: 0 0 52px; }
 .faRow button { padding: 3px 6px; font-size: 8px; font-weight: 800; }
+
+/* ===== v15: piano-rulle clip-editor + velocity-bane + meters + browser-kategorier ===== */
+#clipBar { display: flex; flex-direction: column; align-items: stretch; gap: 5px; flex: 0 0 auto; }
+#cbHead { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.cbSpacer { flex: 1; }
+#cbX2, #cbRev, #cbDup, #rollFoldB, #rollUp, #rollDown {
+  font-size: 9px; font-weight: 800; padding: 3px 7px; letter-spacing: 0.04em;
+}
+#rollFoldB.on { background: var(--sel); color: #141414; border-color: #8a7a1e; }
+#clipRoll { display: flex; gap: 4px; flex: 1; min-height: 96px; }
+#rollLabels { display: grid; gap: 2px; width: 34px; flex: 0 0 34px; }
+.rollLbl {
+  font-size: 8px; font-weight: 800; color: var(--dim);
+  display: flex; align-items: center; justify-content: flex-end;
+  padding-right: 4px; background: #00000012; border-radius: 2px;
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+}
+.rollLbl.root { color: #141414; background: #00000026; }
+#clipSteps { flex: 1; min-width: 0; display: grid; gap: 2px; height: auto; grid-auto-flow: row; }
+.stp.rollCell { min-width: 0; min-height: 0; background: #a7a7a7; border-color: #8b8b8b; border-radius: 2px; }
+.stp.rollCell.q { background: #989898; }
+.stp.rollCell.rootRow:not(.on) { background: #9d9d92; }
+.stp.rollCell.rootRow.q:not(.on) { background: #909086; }
+.stp.rollCell.on { background: var(--trkcol, var(--acid)); border-color: transparent; }
+.stp.rollCell.locksel { outline: 2px solid var(--amber); outline-offset: -1px; }
+.stp.rollCell.playcol { box-shadow: inset 0 0 0 2px #141414cc; }
+#velLane { display: flex; gap: 4px; flex: 0 0 26px; align-items: stretch; }
+#velLbl {
+  width: 34px; flex: 0 0 34px; font-size: 8px; font-weight: 800; color: var(--dim);
+  display: flex; align-items: center; justify-content: flex-end; padding-right: 4px;
+}
+#velStems { flex: 1; min-width: 0; display: grid; gap: 2px; background: #00000010; border-radius: 2px; padding: 1px; }
+.velStem { position: relative; min-width: 0; cursor: ns-resize; border-radius: 1px; }
+.velStem.q { background: #00000010; }
+.velStem .vf { position: absolute; bottom: 0; left: 22%; right: 22%; background: var(--trkcol, var(--acid)); border-radius: 1px 1px 0 0; }
+.velStem.off { cursor: default; }
+.velStem.off .vf { display: none; }
+.velStem.playcol { box-shadow: inset 0 0 0 1px #141414aa; }
+#soundPanel { flex: 0 0 368px; }
+/* levende meters i mixeren (som i Live) */
+.mxFRow { flex: 1; min-height: 0; display: flex; gap: 3px; align-items: stretch; justify-content: center; }
+.mxMeter { width: 5px; background: #00000030; border-radius: 2px; position: relative; overflow: hidden; }
+.mxLv {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 0%;
+  background: linear-gradient(180deg, #c2a300 0%, #3f9b0b 26%);
+  border-radius: 2px;
+  transition: height 0.05s linear;
+}
+/* browser-kategorier under SYNTHS */
+.brCat {
+  font-size: 8px; font-weight: 900; letter-spacing: 0.12em; color: var(--dim);
+  padding: 5px 8px 2px; border-bottom: 1px solid #00000014; margin-bottom: 1px;
+}

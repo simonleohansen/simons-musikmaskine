@@ -123,7 +123,7 @@ export async function buildRig(ctx, st) {
   vIn.connect(conv); conv.connect(vOut); vOut.connect(duckV); duckV.connect(master);
 
   // spor-kaeder: voices -> trackIn -> [crush] -> duckGain -> trackGain -> master
-  const trackIns = [], crush = [], duckGains = [], trackGains = [];
+  const trackIns = [], crush = [], duckGains = [], trackGains = [], analysers = [];
   st.tracks.forEach(tr => {
     const tin = ctx.createGain();
     const dg = ctx.createGain();
@@ -138,9 +138,13 @@ export async function buildRig(ctx, st) {
       } catch (e) { cr = null; }
     }
     head.connect(dg); dg.connect(g); g.connect(master);
+    const an = ctx.createAnalyser();
+    an.fftSize = 256;
+    g.connect(an);
+    analysers.push(an);
     trackIns.push(tin); crush.push(cr); duckGains.push(dg); trackGains.push(g);
   });
-  return { ctx, master, lp, hp, limiter, delay, fb, dIn, vIn, duckD, duckV, trackIns, crush, duckGains, trackGains, choke: {} };
+  return { ctx, master, lp, hp, limiter, delay, fb, dIn, vIn, duckD, duckV, trackIns, crush, duckGains, trackGains, analysers, choke: {} };
 }
 export function trackGainVal(st, tr) {
   const anySolo = st.tracks.some(t => t.solo);
@@ -605,6 +609,12 @@ export function liveVoice(rig, trIdx, p, midi, vel = 1) {
   };
 }
 
+// polyfoni: et step kan holde flere toner (n = foerste, ns = resten) — en akkord
+export function stepNotes(step) {
+  if (!step) return [];
+  return step.ns && step.ns.length ? [step.n || 0, ...step.ns] : [step.n || 0];
+}
+
 // ---------- planlaegning ----------
 // afgoer om et step fyrer (condition + probability)
 export function stepFires(step, loops, fill) {
@@ -693,10 +703,13 @@ export function schedJamStep(rig, st, absStep, t, stepDur, lastFreqs) {
     if (!stepFires(step, loops, fill)) continue;
     const track = st.tracks[tr];
     const r = Math.max(1, Math.min(8, step.r ?? 1));
+    const notes = stepNotes(step);
     for (let k = 0; k < r; k++) {
       const subT = t + (k * stepDur) / r;
-      const subStep = k === 0 ? step : { ...step, v: (step.v ?? 1) * Math.max(0.3, 1 - k * 0.13) };
-      lastFreqs[tr] = trig(rig, tr, track.patch, subStep, subT, st, lastFreqs[tr], stepDur);
+      const fade = k === 0 ? 1 : Math.max(0.3, 1 - k * 0.13);
+      for (const nn of notes) {
+        lastFreqs[tr] = trig(rig, tr, track.patch, { ...step, n: nn, ns: undefined, v: (step.v ?? 1) * fade }, subT, st, lastFreqs[tr], stepDur);
+      }
       if (tr === src) schedDuck(rig, st, subT);
     }
   }
@@ -760,16 +773,18 @@ export function schedArrStep(rig, st, s, t, stepDur, lastFreqs, entering = false
     const nOff = c.n ?? 0;
     const clipL = c.cut != null ? { ...(step.l || {}), cut: c.cut } : step.l;
     const r = Math.max(1, Math.min(8, step.r ?? 1));
+    const notes = stepNotes(step);
     for (let k = 0; k < r; k++) {
       const subT = t + (k * stepDur) / r;
-      let subStep = step;
-      if (k > 0 || vScale !== 1 || nOff || clipL !== step.l) {
-        subStep = { ...step,
-          v: (step.v ?? 1) * vScale * (k > 0 ? Math.max(0.3, 1 - k * 0.13) : 1),
-          n: (step.n || 0) + nOff,
+      const fade = k === 0 ? 1 : Math.max(0.3, 1 - k * 0.13);
+      for (const nn of notes) {
+        const subStep = { ...step,
+          v: (step.v ?? 1) * vScale * fade,
+          n: nn + nOff,
+          ns: undefined,
           l: clipL };
+        lastFreqs[tr] = trig(rig, tr, track.patch, subStep, subT, st, lastFreqs[tr], stepDur);
       }
-      lastFreqs[tr] = trig(rig, tr, track.patch, subStep, subT, st, lastFreqs[tr], stepDur);
       if (tr === src) schedDuck(rig, st, subT);
     }
   }
@@ -952,8 +967,11 @@ export class Player {
     // opdater gains i audition-riggen
     st.tracks.forEach((tr, i) => { this.audRig.trackGains[i].gain.value = Math.max(0.0001, tr.level); });
     setMasterFilter(this.audRig, st.masterFilter ?? 0.5);
-    trig(this.audRig, trIdx, patchOverride || st.tracks[trIdx].patch, step || { on: true, v: 1, n: 0, l: null },
-      ctx.currentTime + 0.02, st, null, 60 / st.bpm / 4);
+    const s2 = step || { on: true, v: 1, n: 0, l: null };
+    for (const nn of stepNotes(s2)) {
+      trig(this.audRig, trIdx, patchOverride || st.tracks[trIdx].patch, { ...s2, n: nn, ns: undefined },
+        ctx.currentTime + 0.02, st, null, 60 / st.bpm / 4);
+    }
   }
 }
 
