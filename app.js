@@ -1,10 +1,12 @@
-// SIMONS MUSIKMASKINE — UI og tilstand (v2: duck/pump, osc2, ADSR, choke, crush,
-// probability, ratchets, conditions, polymeter, FILL, euclid/rotate-vaerktoejer)
-import { Player, renderWav, noteName, cutHz, songEntry, songDurationSec } from './engine.js';
+// SIMONS MUSIKMASKINE — UI og tilstand (v6: Ableton-model i arrangementet —
+// frie clips pr. spor med position/laengde/kilde/overrides, markoerer, tempo-skift,
+// fri automation, loop-brace i takter, seek, JAM-til-clips)
+import { Player, renderWav, noteName, cutHz, songEntry, entrySteps, emptyArr, arrLenSteps, tempoAt, songDurationSec, BAR } from './engine.js';
 
 const $ = id => document.getElementById(id);
 const PATTERN_NAMES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 const TRACK_COLORS = ['#ff3d5a', '#ff9f2e', '#ffd83d', '#c8ff2e', '#3dffc0', '#3db9ff', '#a06bff', '#ff5ad0'];
+const PAT_COLORS = ['#c8ff2e', '#3db9ff', '#ff9f2e', '#ff5ad0', '#3dffc0', '#ffd83d', '#a06bff', '#ff3d5a'];
 const MAX_STEPS = 32;
 
 // ---------- patch-parametre (definitionen driver hele panelet) ----------
@@ -111,13 +113,14 @@ function defaultProject() {
   A.steps[6][11] = { ...stepOn(0.6, 0), p: 0.5 };                               // perc med 50% chance
   A.steps[3][15] = { ...stepOn(0.7, 0), c: 'fill', r: 3 };                      // hat-roll kun ved FILL
   return {
-    v: 2, name: '', bpm: 132, swing: 0.12, masterFilter: 0.5, masterVol: 0.9,
+    v: 3, name: '', bpm: 132, swing: 0.12, masterFilter: 0.5, masterVol: 0.9,
     delayFb: 0.42, delayDiv: 3, pumpFx: 0.4, duckTrack: 0,
-    mode: 'pattern', curPattern: 0, song: [], songLoop: true,
+    mode: 'pattern', curPattern: 0, songLoop: true,
+    arr: emptyArr(),
     tracks, patterns,
   };
 }
-// migration: udfyld manglende felter i gamle projekter
+// migration: udfyld manglende felter + konvertér gamle entry-baserede sange til clips
 function migrate(s) {
   if (!s || !s.tracks || !s.patterns) return null;
   const def = patch();
@@ -125,7 +128,38 @@ function migrate(s) {
   s.patterns.forEach(P => { if (!P.tlen) P.tlen = new Array(8).fill(null); });
   if (s.pumpFx === undefined) s.pumpFx = 0.4;
   if (s.duckTrack === undefined) s.duckTrack = 0;
-  s.song = (s.song || []).map(e => typeof e === 'number' ? { p: e, reps: 1, mutes: null } : e);
+  if (!s.arr) s.arr = emptyArr();
+  if (!s.arr.auto) s.arr.auto = { mf: [], vol: [], pump: [] };
+  // legacy: entry-baseret song-kaede -> frie clips
+  if (Array.isArray(s.song) && s.song.length && !s.arr.clips.length) {
+    let cum = 0;
+    for (const raw of s.song) {
+      const e = songEntry(raw);
+      const len = entrySteps(s, e);
+      for (let tr = 0; tr < 8; tr++) {
+        if (e.mutes && e.mutes[tr]) continue;
+        const cell = e.cells ? e.cells[tr] : null;
+        const p = cell && cell.p != null ? cell.p : e.p;
+        if (!s.patterns[p].steps[tr].some(x => x?.on)) continue;
+        const c = { id: 'm' + cum + '_' + tr, tr, at: cum, len, p };
+        if (cell?.n) c.n = cell.n;
+        if (cell?.lvl != null && cell.lvl < 1) c.lvl = cell.lvl;
+        if (cell?.cut != null) c.cut = cell.cut;
+        s.arr.clips.push(c);
+      }
+      if (e.name) s.arr.markers.push({ at: cum, name: e.name });
+      if (e.bpm) s.arr.tempo.push({ at: cum, bpm: e.bpm });
+      if (e.riser) s.arr.fx.push({ at: cum, type: 'riser', len });
+      if (e.boom) s.arr.fx.push({ at: cum, type: 'boom' });
+      for (const k of ['mf', 'vol', 'pump']) {
+        if (e[k] !== undefined && e[k] !== null) s.arr.auto[k].push({ at: cum + len, v: e[k] });
+      }
+      cum += len;
+    }
+  }
+  delete s.song;
+  delete s.loopA;
+  delete s.loopB;
   s._fill = false;
   return s;
 }
@@ -311,38 +345,37 @@ let ctxMenuEl = null;
 function closeMenus() {
   if (ctxMenuEl) { ctxMenuEl.remove(); ctxMenuEl = null; }
   const e = $('eucPop'); if (e) e.remove();
-  const s = $('entPop'); if (s) s.remove();
-  const c = $('cellPop'); if (c) c.remove();
+  const c = $('clipPop'); if (c) c.remove();
 }
 window.addEventListener('pointerdown', e => {
   if (ctxMenuEl && !ctxMenuEl.contains(e.target)) closeMenus();
-  const ep = $('entPop');
-  if (ep && !ep.contains(e.target) && !e.target.closest('.songChip')) ep.remove();
-  const cp = $('cellPop');
-  if (cp && !cp.contains(e.target) && !e.target.closest('.arrCell')) cp.remove();
+  const cp = $('clipPop');
+  if (cp && !cp.contains(e.target) && !e.target.closest('.arrClip')) cp.remove();
 });
-function openTrackMenu(e, ti) {
+function menuAt(ev, items) {
   closeMenus();
   const m = document.createElement('div');
   m.id = 'ctxMenu';
-  const items = [
+  for (const [label, fn] of items) {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.onclick = e2 => { e2.stopPropagation(); closeMenus(); fn(); };
+    m.appendChild(b);
+  }
+  m.style.left = Math.min(ev.clientX, innerWidth - 200) + 'px';
+  m.style.top = Math.min(ev.clientY, innerHeight - 60 - items.length * 28) + 'px';
+  document.body.appendChild(m);
+  ctxMenuEl = m;
+}
+function openTrackMenu(e, ti) {
+  menuAt(e, [
     ['EUCLID…', () => openEuclid(e, ti)],
     ['ROTÉR ◀', () => rotateTrack(ti, -1)],
     ['ROTÉR ▶', () => rotateTrack(ti, 1)],
     ['SPEJLVEND', () => mirrorTrack(ti)],
     ['TILFÆLDIGT MØNSTER', () => randomTrack(ti)],
     ['RYD SPOR', () => clearTrack(ti)],
-  ];
-  for (const [label, fn] of items) {
-    const b = document.createElement('button');
-    b.textContent = label;
-    b.onclick = ev => { ev.stopPropagation(); closeMenus(); fn(); };
-    m.appendChild(b);
-  }
-  m.style.left = Math.min(e.clientX, innerWidth - 180) + 'px';
-  m.style.top = Math.min(e.clientY, innerHeight - 200) + 'px';
-  document.body.appendChild(m);
-  ctxMenuEl = m;
+  ]);
 }
 function openEuclid(e, ti) {
   closeMenus();
@@ -432,7 +465,6 @@ function renderPanel() {
   $('spTrack').style.color = tr.color;
   $('lockBadge').hidden = !lockSel;
   if (lockSel) $('lockStep').textContent = lockSel.step + 1;
-  // spor-laengde-stepper
   const P = pat();
   $('tlenVal').textContent = tlenOf(curTrack);
   $('tlenBox').classList.toggle('custom', !!(P.tlen[curTrack] && P.tlen[curTrack] !== P.len));
@@ -449,7 +481,6 @@ function renderPanel() {
     }
     return groups[name];
   };
-  // STEP-gruppe (kun i lock-tilstand): chance, ratchet, condition, velocity
   const ls = lockStepObj();
   if (ls) {
     const g = grp('STEP');
@@ -525,6 +556,7 @@ function bumpTlen(d) {
 
 // ---------- patterns ----------
 function patternHasData(p) { return p.steps.some(row => row.some(s => s?.on)); }
+function trackHasData(pIdx, ti) { return st.patterns[pIdx].steps[ti].some(s => s?.on); }
 function renderPatternChips() {
   const el = $('patternChips');
   el.innerHTML = '';
@@ -534,7 +566,6 @@ function renderPatternChips() {
       + (st._queuedPattern === i ? ' queued' : '');
     b.textContent = PATTERN_NAMES[i];
     b.onclick = () => {
-      // under afspilning i pattern-mode: skift kvantiseret ved pattern-graensen
       if (player.playing && st.mode === 'pattern' && i !== st.curPattern) {
         st._queuedPattern = (st._queuedPattern === i) ? null : i;
         renderPatternChips();
@@ -565,125 +596,15 @@ $('patClear').onclick = () => {
   persist(); renderAll();
 };
 
-// ---------- song-mode (arrangements-trin) ----------
-function renderSong() {
-  $('modePattern').className = st.mode === 'pattern' ? 'on' : '';
-  $('modeSong').className = st.mode === 'song' ? 'on' : '';
-  $('songLoopBtn').className = st.songLoop ? 'on' : '';
-  const el = $('songChain');
-  el.innerHTML = '';
-  st.song.forEach((raw, i) => {
-    const e = songEntry(raw);
-    const c = document.createElement('button');
-    c.className = 'songChip';
-    const marks = entMarks(e);
-    if (e.mutes && e.mutes.some(Boolean)) marks.unshift('M');
-    c.innerHTML = (e.name ? `<span class="nm">${e.name}</span>` : '')
-      + `${PATTERN_NAMES[e.p]}${(e.reps || 1) > 1 ? `<span class="reps">×${e.reps}</span>` : ''}`
-      + (marks.length ? `<span class="marks">${marks.join('·')}</span>` : '')
-      + '<span class="x">✕</span>';
-    c.onclick = ev => {
-      if (ev.target.closest('.x')) {
-        st.song.splice(i, 1);
-        persist(); renderSong();
-        return;
-      }
-      openSongEntry(ev, i);
-    };
-    el.appendChild(c);
-  });
-  if (typeof curView !== 'undefined' && curView === 'arr') renderArr();
-}
-// trin-editor: gentagelser, mute-maske, filter-automation, riser/boom/autofill
-function openSongEntry(ev, idx) {
-  closeMenus();
-  const e = songEntry(st.song[idx]);
-  st.song[idx] = e;
-  const pop = document.createElement('div');
-  pop.id = 'entPop';
-  const dots = st.tracks.map((tr, i) =>
-    `<button class="muteDot" data-i="${i}" title="${tr.name}" style="--c:${tr.color}"></button>`).join('');
-  pop.innerHTML = `<div class="eucTitle">TRIN ${idx + 1} · PATTERN ${PATTERN_NAMES[e.p]}
-      <span style="margin-left:auto"><button id="entML" title="Flyt trin til venstre">◀</button><button id="entMR" title="Flyt trin til højre">▶</button></span></div>
-    <label>NAVN <input id="entName" type="text" maxlength="14" placeholder="fx INTRO, DROP…" spellcheck="false"></label>
-    <label>GENTAG <button id="entRD">−</button> <b id="entRV"></b> <button id="entRI">+</button>
-      <span style="margin-left:10px">BPM</span> <input id="entBpm" type="number" min="60" max="200" placeholder="arv" style="width:52px"> <button id="entBpmX">✕</button>
-      <button id="entGoto" style="margin-left:auto">GÅ TIL PATTERN</button></label>
-    <div class="entRow"><span class="plabel">SPOR</span><div class="muteDots">${dots}</div><button id="entMClr">ALLE MED</button></div>
-    <div class="entRow"><span class="plabel">FLT SLUT</span>
-      <input id="entMF" type="range" min="0" max="1" step="0.01"><b id="entMFV">—</b><button id="entMFX">✕</button></div>
-    <div class="entToggles">
-      <button id="entRiser" title="Noise-riser der stiger gennem hele trinnet og slutter ved næste trin">↗ RISER</button>
-      <button id="entBoom" title="Dybt nedslag + crash på trinnets første slag">✸ BOOM</button>
-      <button id="entFill" title="FILL-steps spiller automatisk i trinnets sidste gennemløb">AUTOFILL</button>
-    </div>
-    <div class="eucBtns"><button id="entDup">⧉ DUPLIKÉR</button><button id="entClose">LUK</button></div>`;
-  pop.style.left = Math.min(ev.clientX - 40, innerWidth - 280) + 'px';
-  pop.style.top = Math.min(ev.clientY + 14, innerHeight - 250) + 'px';
-  document.body.appendChild(pop);
-  pop.onpointerdown = evt => evt.stopPropagation();
-  const q = s => pop.querySelector(s);
-  const sync = () => {
-    q('#entRV').textContent = e.reps || 1;
-    pop.querySelectorAll('.muteDot').forEach(d => {
-      d.classList.toggle('muted', !!(e.mutes && e.mutes[+d.dataset.i]));
-    });
-    const has = e.mf !== undefined && e.mf !== null;
-    q('#entMF').value = has ? e.mf : 0.5;
-    q('#entMF').classList.toggle('unset', !has);
-    q('#entMFV').textContent = has ? (Math.abs(e.mf - 0.5) < 0.01 ? 'OPEN' : (e.mf < 0.5 ? 'LP' : 'HP')) : '—';
-    q('#entRiser').classList.toggle('on', !!e.riser);
-    q('#entBoom').classList.toggle('on', !!e.boom);
-    q('#entFill').classList.toggle('on', !!e.fillLast);
-    renderSong();
-  };
-  q('#entName').value = e.name || '';
-  q('#entName').oninput = () => {
-    e.name = q('#entName').value.trim().toUpperCase();
-    if (!e.name) delete e.name;
-    persist(); renderSong();
-  };
-  q('#entBpm').value = e.bpm || '';
-  q('#entBpm').oninput = () => {
-    const v = +q('#entBpm').value;
-    if (v >= 60 && v <= 200) e.bpm = v; else delete e.bpm;
-    persist(); renderSong();
-  };
-  q('#entBpmX').onclick = () => { delete e.bpm; q('#entBpm').value = ''; persist(); renderSong(); };
-  const move = d => {
-    const j = idx + d;
-    if (j < 0 || j >= st.song.length) return;
-    [st.song[idx], st.song[j]] = [st.song[j], st.song[idx]];
-    persist(); renderSong(); pop.remove();
-  };
-  q('#entML').onclick = () => move(-1);
-  q('#entMR').onclick = () => move(1);
-  q('#entRD').onclick = () => { e.reps = Math.max(1, (e.reps || 1) - 1); persist(); sync(); };
-  q('#entRI').onclick = () => { e.reps = Math.min(64, (e.reps || 1) + 1); persist(); sync(); };
-  q('#entGoto').onclick = () => { st.curPattern = e.p; lockSel = null; persist(); renderAll(); };
-  pop.querySelectorAll('.muteDot').forEach(d => {
-    d.onclick = () => {
-      const i = +d.dataset.i;
-      e.mutes = e.mutes || new Array(8).fill(false);
-      e.mutes[i] = !e.mutes[i];
-      if (!e.mutes.some(Boolean)) e.mutes = null;
-      persist(); sync();
-    };
-  });
-  q('#entMClr').onclick = () => { e.mutes = null; persist(); sync(); };
-  q('#entMF').oninput = () => { e.mf = +q('#entMF').value; persist(); sync(); };
-  q('#entMFX').onclick = () => { delete e.mf; persist(); sync(); };
-  q('#entRiser').onclick = () => { e.riser = !e.riser; if (!e.riser) delete e.riser; persist(); sync(); };
-  q('#entBoom').onclick = () => { e.boom = !e.boom; if (!e.boom) delete e.boom; persist(); sync(); };
-  q('#entFill').onclick = () => { e.fillLast = !e.fillLast; if (!e.fillLast) delete e.fillLast; persist(); sync(); };
-  q('#entDup').onclick = () => { st.song.splice(idx + 1, 0, snapshot(e)); persist(); renderSong(); pop.remove(); };
-  q('#entClose').onclick = () => pop.remove();
-  sync();
-}
-$('songAdd').onclick = () => { st.song.push({ p: st.curPattern, reps: 1, mutes: null }); persist(); renderSong(); };
-
-// ---------- ARRANGEMENT-view: sangen som tidslinje (Tab skifter, som i Ableton) ----------
+// ---------- ARRANGEMENT (frie clips pr. spor, Ableton-model) ----------
 let curView = 'seq';
+let arrZoom = 1;
+let selClip = null;         // id paa valgt clip
+let clipSeq = 1;
+let lastViewSteps = 16 * 16;
+function newClipId() { return 'c' + Date.now().toString(36) + (clipSeq++); }
+function viewSteps() { return arrLenSteps(st) + 4 * BAR; } // altid lidt luft til hoejre
+function fmtDur(sec) { return Math.floor(sec / 60) + ':' + String(Math.round(sec % 60)).padStart(2, '0'); }
 function toggleView(v) {
   curView = v || (curView === 'seq' ? 'arr' : 'seq');
   $('seq').hidden = curView !== 'seq';
@@ -694,8 +615,6 @@ function toggleView(v) {
 }
 $('viewToggle').onclick = () => toggleView();
 
-function entSteps(e) { return st.patterns[e.p].len * (e.reps || 1); }
-function songTotalSteps() { return st.song.reduce((a, raw) => a + entSteps(songEntry(raw)), 0); }
 // mini-preview af et spors loop som SVG-baggrund (gentages pr. loop via background-size)
 function trackMarksURI(ti, pIdx, color) {
   const P = st.patterns[pIdx];
@@ -711,223 +630,276 @@ function trackMarksURI(ti, pIdx, color) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${L} 12" preserveAspectRatio="none"><g fill="${color}">${rects}</g></svg>`;
   return { uri: `url("data:image/svg+xml,${encodeURIComponent(svg)}")`, L };
 }
-const PAT_COLORS = ['#c8ff2e', '#3db9ff', '#ff9f2e', '#ff5ad0', '#3dffc0', '#ffd83d', '#a06bff', '#ff3d5a'];
-let arrZoom = 1;
-let suppressEntClick = false;
-function fmtDur(sec) { return Math.floor(sec / 60) + ':' + String(Math.round(sec % 60)).padStart(2, '0'); }
-function entMarks(e) {
-  const m = [];
-  if (e.bpm) m.push('♩' + e.bpm);
-  if (e.mf !== undefined && e.mf !== null) m.push('FLT');
-  if (e.vol !== undefined && e.vol !== null) m.push('VOL');
-  if (e.pump !== undefined && e.pump !== null) m.push('PMP');
-  if (e.riser) m.push('↗');
-  if (e.boom) m.push('✸');
-  if (e.fillLast) m.push('FILL');
-  if (e.cells && e.cells.some(c => c)) m.push('CLIP');
-  return m;
-}
-// spil herfra: saetter startmarkoer; hopper kvantiseret hvis der spilles
-function seekEntry(i) {
-  st._startEntry = i;
+// spil herfra (takt): startmarkoer + kvantiseret hop hvis der spilles
+function seekBar(bar) {
+  st._startBar = bar;
   if (st.mode !== 'song') { st.mode = 'song'; persist(); }
   if (player.playing) {
-    player.jumpTo(i);
-    toast('Hopper til trin ' + (i + 1) + ' ved næste pattern-grænse');
+    player.jumpTo(bar * BAR);
+    toast('Hopper til takt ' + (bar + 1) + ' ved næste takt-grænse');
   }
-  renderSong();
+  renderSongUI();
 }
-function entryMenu(ev, i) {
-  closeMenus();
-  const e = songEntry(st.song[i]);
-  const m = document.createElement('div');
-  m.id = 'ctxMenu';
-  const items = [
-    ['▶ SPIL HERFRA', () => seekEntry(i)],
-    ['⟳ LOOP DETTE TRIN', () => { st.loopA = i; st.loopB = i; persist(); renderSong(); }],
-  ];
-  if (st.loopA != null) {
-    items.push(['⟳ LOOP HERTIL', () => {
-      st.loopB = Math.max(st.loopA, i); st.loopA = Math.min(st.loopA, i);
-      persist(); renderSong();
-    }]);
-    items.push(['RYD LOOP', () => { delete st.loopA; delete st.loopB; persist(); renderSong(); }]);
+// Ableton-overskrivning: en placeret clip trimmer/spalter det, den lander oven i
+function resolveOverlap(clips, c) {
+  const res = [];
+  for (const o of clips) {
+    if (o.id === c.id || o.tr !== c.tr || o.at + o.len <= c.at || o.at >= c.at + c.len) { res.push(o); continue; }
+    const leftLen = c.at - o.at;
+    const rightLen = (o.at + o.len) - (c.at + c.len);
+    if (leftLen > 0) res.push({ ...o, len: leftLen });
+    if (rightLen > 0) res.push({ ...o, id: newClipId(), at: c.at + c.len, len: rightLen });
   }
-  if ((e.reps || 1) > 1) {
-    items.push(['✂ SPLIT', () => {
-      const a = Math.ceil(e.reps / 2), b = e.reps - a;
-      e.reps = a;
-      st.song.splice(i + 1, 0, { ...snapshot(e), reps: b });
-      persist(); renderSong();
-    }]);
-  }
-  items.push(['⧉ DUPLIKÉR', () => { st.song.splice(i + 1, 0, snapshot(e)); persist(); renderSong(); }]);
-  items.push(['+ INDSÆT TRIN EFTER', () => { st.song.splice(i + 1, 0, { p: st.curPattern, reps: 1, mutes: null }); persist(); renderSong(); }]);
-  items.push(['◌ INDSÆT PAUSE EFTER', () => { st.song.splice(i + 1, 0, { p: e.p, reps: 1, mutes: new Array(8).fill(true), name: 'PAUSE' }); persist(); renderSong(); }]);
-  items.push(['✕ SLET', () => { st.song.splice(i, 1); if (st.loopB >= st.song.length) { delete st.loopA; delete st.loopB; } persist(); renderSong(); }]);
-  for (const [label, fn] of items) {
-    const b = document.createElement('button');
-    b.textContent = label;
-    b.onclick = e2 => { e2.stopPropagation(); closeMenus(); fn(); };
-    m.appendChild(b);
-  }
-  m.style.left = Math.min(ev.clientX, innerWidth - 200) + 'px';
-  m.style.top = Math.min(ev.clientY, innerHeight - 280) + 'px';
-  document.body.appendChild(m);
-  ctxMenuEl = m;
+  return res;
 }
-// clip-editor for én blok (spor × trin): kilde-pattern, transponering, niveau, filter
-function openCellEditor(ev, idx, ti) {
+function placeClip(c) {
+  st.arr.clips = resolveOverlap(st.arr.clips.filter(x => x.id !== c.id), c);
+  st.arr.clips.push(c);
+}
+function addClip(tr, atBar, lenBars, p, extra = {}) {
+  const c = { id: newClipId(), tr, at: atBar * BAR, len: lenBars * BAR, p, ...extra };
+  placeClip(c);
+  return c;
+}
+// + TILFØJ: laeg det aktuelle pattern ind som clips paa alle spor med indhold (4 takter, bagest)
+$('songAdd').onclick = () => {
+  const atBar = arrLenSteps(st) / BAR === 1 && !st.arr.clips.length ? 0 : Math.ceil(arrLenSteps(st) / BAR);
+  const startBar = st.arr.clips.length ? atBar : 0;
+  let added = 0;
+  for (let tr = 0; tr < 8; tr++) {
+    if (!trackHasData(st.curPattern, tr)) continue;
+    addClip(tr, startBar, 4, st.curPattern);
+    added++;
+  }
+  if (!added) { toast('Pattern ' + PATTERN_NAMES[st.curPattern] + ' er tomt — læg steps i det først', true); return; }
+  persist(); renderSongUI();
+  toast('Pattern ' + PATTERN_NAMES[st.curPattern] + ' lagt ind som ' + added + ' clips (4 takter)');
+  if (curView !== 'arr') toggleView('arr');
+};
+$('songLoopBtn').onclick = () => { st.songLoop = !st.songLoop; persist(); renderSongUI(); };
+$('modePattern').onclick = () => { st.mode = 'pattern'; persist(); renderSongUI(); };
+$('modeSong').onclick = () => {
+  if (!st.arr.clips.length) { toast('Arrangementet er tomt — tryk + TILFØJ eller ● JAM, eller byg med Tab', true); return; }
+  st.mode = 'song';
+  persist(); renderSongUI();
+};
+function renderSongUI() {
+  $('modePattern').className = st.mode === 'pattern' ? 'on' : '';
+  $('modeSong').className = st.mode === 'song' ? 'on' : '';
+  $('songLoopBtn').className = st.songLoop ? 'on' : '';
+  $('songChain').innerHTML = st.arr.clips.length
+    ? `<span class="arrSum">${Math.ceil(arrLenSteps(st) / BAR)} takter · ${st.arr.clips.length} clips · ${fmtDur(songDurationSec(st))}</span>`
+    : '';
+  if (curView === 'arr') renderArr();
+}
+// clip-editor
+function openClipEditor(ev, clip) {
   closeMenus();
-  const e = songEntry(st.song[idx]);
-  st.song[idx] = e;
-  const tr = st.tracks[ti];
+  const tr = st.tracks[clip.tr];
   const pop = document.createElement('div');
-  pop.id = 'cellPop';
-  const srcBtns = PATTERN_NAMES.map((nm, pi) => {
-    const has = st.patterns[pi].steps[ti].some(s => s?.on);
-    return `<button class="srcBtn" data-p="${pi}" ${has ? '' : 'disabled'}>${nm}</button>`;
-  }).join('');
-  pop.innerHTML = `<div class="eucTitle" style="color:${tr.color}">${tr.name} · TRIN ${idx + 1}</div>
+  pop.id = 'clipPop';
+  const srcBtns = PATTERN_NAMES.map((nm, pi) =>
+    `<button class="srcBtn" data-p="${pi}" ${trackHasData(pi, clip.tr) ? '' : 'disabled'}>${nm}</button>`).join('');
+  pop.innerHTML = `<div class="eucTitle" style="color:${tr.color}">${tr.name} · TAKT ${clip.at / BAR + 1}</div>
     <div class="entRow"><span class="plabel">KILDE</span><div class="srcRow">${srcBtns}</div></div>
+    <label>LÆNGDE <button id="clD">−</button> <b id="clV"></b> <button id="clI">+</button> <span style="color:var(--dim)">takter</span></label>
     <label>TONE <input id="cpN" type="range" min="-24" max="24" step="1"> <b id="cpNV"></b></label>
     <label>NIVEAU <input id="cpL" type="range" min="0.05" max="1" step="0.01"> <b id="cpLV"></b></label>
     <label>CUTOFF <input id="cpC" type="range" min="0" max="1" step="0.01"> <b id="cpCV"></b> <button id="cpCX">✕</button></label>
-    <div class="eucBtns"><button id="cpMute"></button><button id="cpReset">NULSTIL CLIP</button><button id="cpClose">LUK</button></div>`;
-  pop.style.left = Math.min(ev.clientX - 30, innerWidth - 280) + 'px';
-  pop.style.top = Math.min(ev.clientY + 12, innerHeight - 240) + 'px';
+    <div class="eucBtns"><button id="cpSplit">✂ SPLIT</button><button id="cpDup">⧉</button><button id="cpDel">✕ SLET</button><button id="cpClose">LUK</button></div>`;
+  pop.style.left = Math.min(ev.clientX - 30, innerWidth - 290) + 'px';
+  pop.style.top = Math.min(ev.clientY + 12, innerHeight - 260) + 'px';
   document.body.appendChild(pop);
   pop.onpointerdown = evt => evt.stopPropagation();
   const q = s => pop.querySelector(s);
-  const cellNow = () => (e.cells && e.cells[ti]) || null;
-  const ensure = () => {
-    e.cells = e.cells || new Array(8).fill(null);
-    e.cells[ti] = e.cells[ti] || {};
-    return e.cells[ti];
-  };
-  const cleanup = () => {
-    const c = cellNow();
-    if (c && (c.p == null || c.p === e.p) && !c.n && (c.lvl ?? 1) === 1 && c.cut == null) {
-      e.cells[ti] = null;
-      if (!e.cells.some(x => x)) delete e.cells;
-    }
-  };
   const sync = () => {
-    const c = cellNow();
-    const effP = c && c.p != null ? c.p : e.p;
-    pop.querySelectorAll('.srcBtn').forEach(b2 => b2.classList.toggle('on', +b2.dataset.p === effP));
-    q('#cpN').value = c?.n ?? 0;
-    q('#cpNV').textContent = (c?.n ?? 0) > 0 ? '+' + c.n : (c?.n ?? 0);
-    q('#cpL').value = c?.lvl ?? 1;
-    q('#cpLV').textContent = Math.round((c?.lvl ?? 1) * 100) + '%';
-    const hasCut = c && c.cut != null;
-    q('#cpC').value = hasCut ? c.cut : 0.8;
+    pop.querySelectorAll('.srcBtn').forEach(b2 => b2.classList.toggle('on', +b2.dataset.p === clip.p));
+    q('#clV').textContent = clip.len / BAR;
+    q('#cpN').value = clip.n ?? 0;
+    q('#cpNV').textContent = (clip.n ?? 0) > 0 ? '+' + clip.n : (clip.n ?? 0);
+    q('#cpL').value = clip.lvl ?? 1;
+    q('#cpLV').textContent = Math.round((clip.lvl ?? 1) * 100) + '%';
+    const hasCut = clip.cut != null;
+    q('#cpC').value = hasCut ? clip.cut : 0.8;
     q('#cpC').classList.toggle('unset', !hasCut);
-    q('#cpCV').textContent = hasCut ? Math.round(c.cut * 100) + '%' : '—';
-    const muted = !!(e.mutes && e.mutes[ti]);
-    q('#cpMute').textContent = muted ? 'UNMUTE' : 'MUTE';
-    q('#cpMute').classList.toggle('on', muted);
-    renderSong();
+    q('#cpCV').textContent = hasCut ? Math.round(clip.cut * 100) + '%' : '—';
+    persist(); renderSongUI();
   };
-  pop.querySelectorAll('.srcBtn').forEach(b2 => {
-    b2.onclick = () => {
-      ensure().p = +b2.dataset.p;
-      if (e.mutes && e.mutes[ti]) { e.mutes[ti] = false; if (!e.mutes.some(Boolean)) e.mutes = null; }
-      cleanup(); persist(); sync();
-    };
-  });
-  q('#cpN').oninput = () => { const v = +q('#cpN').value; if (v) ensure().n = v; else if (cellNow()) delete cellNow().n; cleanup(); persist(); sync(); };
-  q('#cpL').oninput = () => { const v = +q('#cpL').value; if (v < 0.995) ensure().lvl = v; else if (cellNow()) delete cellNow().lvl; cleanup(); persist(); sync(); };
-  q('#cpC').oninput = () => { ensure().cut = +q('#cpC').value; persist(); sync(); };
-  q('#cpCX').onclick = () => { if (cellNow()) delete cellNow().cut; cleanup(); persist(); sync(); };
-  q('#cpMute').onclick = () => {
-    e.mutes = e.mutes || new Array(8).fill(false);
-    e.mutes[ti] = !e.mutes[ti];
-    if (!e.mutes.some(Boolean)) e.mutes = null;
-    persist(); sync();
+  pop.querySelectorAll('.srcBtn').forEach(b2 => { b2.onclick = () => { clip.p = +b2.dataset.p; sync(); }; });
+  q('#clD').onclick = () => { clip.len = Math.max(BAR, clip.len - BAR); placeClip(clip); sync(); };
+  q('#clI').onclick = () => { clip.len += BAR; placeClip(clip); sync(); };
+  q('#cpN').oninput = () => { const v = +q('#cpN').value; if (v) clip.n = v; else delete clip.n; sync(); };
+  q('#cpL').oninput = () => { const v = +q('#cpL').value; if (v < 0.995) clip.lvl = v; else delete clip.lvl; sync(); };
+  q('#cpC').oninput = () => { clip.cut = +q('#cpC').value; sync(); };
+  q('#cpCX').onclick = () => { delete clip.cut; sync(); };
+  q('#cpSplit').onclick = () => {
+    if (clip.len < 2 * BAR) { toast('Clip er kun 1 takt', true); return; }
+    const half = Math.floor(clip.len / BAR / 2) * BAR;
+    const right = { ...snapshot(clip), id: newClipId(), at: clip.at + half, len: clip.len - half };
+    clip.len = half;
+    st.arr.clips.push(right);
+    persist(); renderSongUI(); pop.remove();
   };
-  q('#cpReset').onclick = () => { if (e.cells) { e.cells[ti] = null; if (!e.cells.some(x => x)) delete e.cells; } persist(); sync(); };
+  q('#cpDup').onclick = () => {
+    const dup = { ...snapshot(clip), id: newClipId(), at: clip.at + clip.len };
+    placeClip(dup);
+    persist(); renderSongUI(); pop.remove();
+  };
+  q('#cpDel').onclick = () => {
+    st.arr.clips = st.arr.clips.filter(x => x.id !== clip.id);
+    selClip = null;
+    persist(); renderSongUI(); pop.remove();
+  };
   q('#cpClose').onclick = () => pop.remove();
   sync();
+}
+// markoer/tempo/fx-menu paa en takt
+function markerMenu(ev, bar) {
+  const at = bar * BAR;
+  const items = [
+    ['⚑ NY MARKØR…', () => {
+      const name = prompt('Markør-navn (fx INTRO, DROP):', '');
+      if (name && name.trim()) { st.arr.markers.push({ at, name: name.trim().toUpperCase().slice(0, 14) }); persist(); renderSongUI(); }
+    }],
+    ['♩ TEMPO-SKIFT…', () => {
+      const b = +prompt('BPM fra takt ' + (bar + 1) + ':', st.bpm);
+      if (b >= 60 && b <= 200) { st.arr.tempo.push({ at, bpm: b }); st.arr.tempo.sort((a, c) => a.at - c.at); persist(); renderSongUI(); }
+    }],
+    ['↗ RISER (4 TAKTER)', () => { st.arr.fx.push({ at, type: 'riser', len: 4 * BAR }); persist(); renderSongUI(); }],
+    ['✸ BOOM', () => { st.arr.fx.push({ at, type: 'boom' }); persist(); renderSongUI(); }],
+  ];
+  const clean = arrArr => arrArr.filter(x => x.at !== at);
+  if (st.arr.markers.some(x => x.at === at) || st.arr.tempo.some(x => x.at === at) || st.arr.fx.some(x => x.at === at)) {
+    items.push(['✕ SLET MARKØRER HER', () => {
+      st.arr.markers = clean(st.arr.markers);
+      st.arr.tempo = clean(st.arr.tempo);
+      st.arr.fx = clean(st.arr.fx);
+      persist(); renderSongUI();
+    }]);
+  }
+  menuAt(ev, items);
 }
 function renderArr() {
   const el = $('arr');
   el.innerHTML = '';
-  if (!st.song.length) {
-    el.innerHTML = `<div id="arrEmpty">Tom tidslinje.<br><br>Byg sangen med <b>+ TILFØJ</b> i song-baren,<br>eller tryk <b>● JAM</b> og optag din live-jam som arrangement.</div>`;
-    return;
-  }
-  const entries = st.song.map(songEntry);
-  const total = songTotalSteps();
-  const wPct = e => (entSteps(e) / total * 100) + '%';
-  // vaerktoejslinje: info, loop, zoom
+  const total = viewSteps();
+  lastViewSteps = total;
+  const totalBars = total / BAR;
+  const xPct = s => (s / total * 100);
+  // vaerktoejslinje
   const tb = document.createElement('div');
   tb.id = 'arrTb';
-  tb.innerHTML = `<span id="arrInfo">${entries.length} trin · ${Math.ceil(total / 16)} takter · ${fmtDur(songDurationSec(st))}</span>`
-    + (st.loopA != null ? `<span id="arrLoopInfo">⟳ LOOP ${st.loopA + 1}–${st.loopB + 1}</span><button id="arrLoopClr">RYD</button>` : '')
+  const hasLoop = st.arr.loopA != null && st.arr.loopB != null;
+  tb.innerHTML = `<span id="arrInfo">${st.arr.clips.length ? Math.ceil(arrLenSteps(st) / BAR) + ' takter · ' + st.arr.clips.length + ' clips · ' + fmtDur(songDurationSec(st)) : 'Tomt arrangement — dobbeltklik på en bane for at lægge en clip'}</span>`
+    + (hasLoop ? `<span id="arrLoopInfo">⟳ LOOP TAKT ${st.arr.loopA + 1}–${st.arr.loopB}</span><button id="arrLoopClr">RYD</button>` : '')
     + `<span class="sp"></span><button id="arrZoomOut" title="Zoom ud">−</button><b id="arrZoomV">${Math.round(arrZoom * 100)}%</b><button id="arrZoomIn" title="Zoom ind">+</button>`;
   el.appendChild(tb);
   tb.querySelector('#arrZoomIn').onclick = () => { arrZoom = Math.min(8, arrZoom * 1.4); renderArr(); };
   tb.querySelector('#arrZoomOut').onclick = () => { arrZoom = Math.max(1, arrZoom / 1.4); renderArr(); };
   const lc = tb.querySelector('#arrLoopClr');
-  if (lc) lc.onclick = () => { delete st.loopA; delete st.loopB; persist(); renderSong(); };
-  // overview-strip: hele sangens form, klik = spil herfra
+  if (lc) lc.onclick = () => { st.arr.loopA = null; st.arr.loopB = null; persist(); renderSongUI(); };
+  // overview-strip
   const mini = document.createElement('div');
   mini.id = 'arrMini';
-  entries.forEach((e, i) => {
+  for (const c of st.arr.clips) {
     const seg = document.createElement('div');
-    const inLoop = st.loopA != null && i >= st.loopA && i <= st.loopB;
-    seg.className = 'miniSeg' + (inLoop ? ' inLoop' : '');
-    seg.style.width = wPct(e);
-    seg.style.background = PAT_COLORS[e.p];
-    seg.title = (e.name || PATTERN_NAMES[e.p]) + ' — klik: spil herfra';
-    seg.onclick = () => seekEntry(i);
+    seg.className = 'miniClip';
+    seg.style.left = xPct(c.at) + '%';
+    seg.style.width = xPct(c.len) + '%';
+    seg.style.top = (c.tr / 8 * 100) + '%';
+    seg.style.background = st.tracks[c.tr].color;
     mini.appendChild(seg);
-  });
+  }
   const miniPh = document.createElement('div');
   miniPh.id = 'arrMiniPh';
   miniPh.hidden = true;
   mini.appendChild(miniPh);
+  mini.onclick = ev => {
+    const r = mini.getBoundingClientRect();
+    if (!r.width) return;
+    seekBar(Math.floor((ev.clientX - r.left) / r.width * totalBars));
+  };
   el.appendChild(mini);
-  // scroll-omraade + zoombar wrap
+  // scroller + zoombar wrap
   const scroller = document.createElement('div');
   scroller.id = 'arrScroll';
   const wrap = document.createElement('div');
   wrap.id = 'arrWrap';
   wrap.style.width = (arrZoom * 100) + '%';
-  // LINJAL: klik = spil herfra (kvantiseret) · traek = loop-omraade · dbl = ryd loop
+  // MARKØR-raekke: navne, tempo, riser/boom — dobbeltklik = tilfoej, hoejreklik flag = slet
+  const mkRow = document.createElement('div');
+  mkRow.className = 'arrRow arrMks';
+  mkRow.innerHTML = '<div class="arrLabel">MARKØR</div>';
+  const mkLane = document.createElement('div');
+  mkLane.className = 'arrLanes mkLane';
+  for (const m of st.arr.markers) {
+    const f = document.createElement('button');
+    f.className = 'mkFlag';
+    f.style.left = xPct(m.at) + '%';
+    f.textContent = '⚑ ' + m.name;
+    f.onclick = () => seekBar(m.at / BAR);
+    f.oncontextmenu = ev => { ev.preventDefault(); markerMenu(ev, m.at / BAR); };
+    mkLane.appendChild(f);
+  }
+  for (const t2 of st.arr.tempo) {
+    const f = document.createElement('button');
+    f.className = 'mkFlag tempo';
+    f.style.left = xPct(t2.at) + '%';
+    f.textContent = '♩' + t2.bpm;
+    f.oncontextmenu = ev => { ev.preventDefault(); markerMenu(ev, t2.at / BAR); };
+    mkLane.appendChild(f);
+  }
+  for (const f2 of st.arr.fx) {
+    const f = document.createElement('button');
+    f.className = 'mkFlag fx' + (f2.type === 'riser' ? ' riser' : '');
+    f.style.left = xPct(f2.at) + '%';
+    if (f2.type === 'riser') f.style.width = xPct(f2.len || 4 * BAR) + '%';
+    f.textContent = f2.type === 'riser' ? '↗ RISER' : '✸';
+    f.oncontextmenu = ev => { ev.preventDefault(); markerMenu(ev, f2.at / BAR); };
+    mkLane.appendChild(f);
+  }
+  mkLane.ondblclick = ev => {
+    const r = mkLane.getBoundingClientRect();
+    if (!r.width) return;
+    markerMenu(ev, Math.floor((ev.clientX - r.left) / r.width * totalBars));
+  };
+  mkLane.oncontextmenu = ev => {
+    if (ev.target !== mkLane) return;
+    ev.preventDefault();
+    const r = mkLane.getBoundingClientRect();
+    markerMenu(ev, Math.floor((ev.clientX - r.left) / r.width * totalBars));
+  };
+  mkRow.appendChild(mkLane);
+  wrap.appendChild(mkRow);
+  // LINJAL: takt-felter — klik = spil herfra · traek = loop · dbl = ryd loop
   const ruler = document.createElement('div');
   ruler.className = 'arrRow arrRuler';
   ruler.innerHTML = '<div class="arrLabel">TAKT</div>';
   const rulerIn = document.createElement('div');
   rulerIn.className = 'arrLanes';
-  let acc = 0;
-  entries.forEach((e, i) => {
+  const lblEvery = totalBars > 48 ? 4 : (totalBars > 24 ? 2 : 1);
+  for (let bar = 0; bar < totalBars; bar++) {
     const seg = document.createElement('div');
-    const inLoop = st.loopA != null && i >= st.loopA && i <= st.loopB;
+    const inLoop = hasLoop && bar >= st.arr.loopA && bar < st.arr.loopB;
     seg.className = 'rulSeg' + (inLoop ? ' inLoop' : '');
-    seg.style.width = wPct(e);
-    seg.dataset.i = i;
-    const reps = e.reps || 1;
-    let ticks = '';
-    if (reps > 1 && reps <= 24) for (let r = 1; r < reps; r++) ticks += `<i style="left:${(r / reps * 100).toFixed(2)}%"></i>`;
-    seg.innerHTML = `<span>${Math.floor(acc / 16) + 1}</span>${st._startEntry === i ? '<b class="startFlag">▸</b>' : ''}${ticks}`;
+    seg.style.width = (100 / totalBars) + '%';
+    seg.dataset.bar = bar;
+    seg.innerHTML = (bar % lblEvery === 0 ? `<span>${bar + 1}</span>` : '')
+      + (st._startBar === bar ? '<b class="startFlag">▸</b>' : '');
     rulerIn.appendChild(seg);
-    acc += entSteps(e);
-  });
+  }
   let rulDrag = null;
-  const segAt = ev => document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.rulSeg');
   rulerIn.onpointerdown = ev => {
     const seg = ev.target.closest('.rulSeg');
     if (!seg) return;
-    rulDrag = { a: +seg.dataset.i, b: +seg.dataset.i, moved: false };
+    rulDrag = { a: +seg.dataset.bar, b: +seg.dataset.bar, moved: false };
     try { rulerIn.setPointerCapture(ev.pointerId); } catch (e2) {}
   };
   rulerIn.onpointermove = ev => {
     if (!rulDrag) return;
-    const seg = segAt(ev);
-    if (seg && +seg.dataset.i !== rulDrag.b) {
-      rulDrag.b = +seg.dataset.i;
+    const seg = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.rulSeg');
+    if (seg && +seg.dataset.bar !== rulDrag.b) {
+      rulDrag.b = +seg.dataset.bar;
       rulDrag.moved = true;
       const lo = Math.min(rulDrag.a, rulDrag.b), hi = Math.max(rulDrag.a, rulDrag.b);
       rulerIn.querySelectorAll('.rulSeg').forEach((s2, j) => s2.classList.toggle('selRange', j >= lo && j <= hi));
@@ -938,103 +910,18 @@ function renderArr() {
     const { a, b, moved } = rulDrag;
     rulDrag = null;
     if (moved && a !== b) {
-      st.loopA = Math.min(a, b);
-      st.loopB = Math.max(a, b);
-      persist(); renderSong();
-      toast('Loop sat: trin ' + (st.loopA + 1) + '–' + (st.loopB + 1));
+      st.arr.loopA = Math.min(a, b);
+      st.arr.loopB = Math.max(a, b) + 1;
+      persist(); renderSongUI();
+      toast('Loop: takt ' + (st.arr.loopA + 1) + '–' + st.arr.loopB);
     } else {
-      seekEntry(a);
+      seekBar(a);
     }
   };
-  rulerIn.ondblclick = () => { delete st.loopA; delete st.loopB; persist(); renderSong(); };
+  rulerIn.ondblclick = () => { st.arr.loopA = null; st.arr.loopB = null; persist(); renderSongUI(); };
   ruler.appendChild(rulerIn);
   wrap.appendChild(ruler);
-  // TRIN-HOVEDER: klik = editor · traek = flyt · traek i hoejre kant = aendr gentagelser · hoejreklik = menu
-  const head = document.createElement('div');
-  head.className = 'arrRow arrHead';
-  head.innerHTML = '<div class="arrLabel"></div>';
-  const headIn = document.createElement('div');
-  headIn.className = 'arrLanes';
-  let entDrag = null;
-  entries.forEach((e, i) => {
-    const b = document.createElement('button');
-    b.className = 'arrEnt';
-    b.style.width = wPct(e);
-    b.style.setProperty('--pc', PAT_COLORS[e.p]);
-    b.dataset.i = i;
-    const marks = entMarks(e);
-    const patEmpty = !patternHasData(st.patterns[e.p]) && !(e.cells && e.cells.some(c => c));
-    if (patEmpty) b.classList.add('empty');
-    const subTxt = () => `${e.name ? PATTERN_NAMES[e.p] : ''}${(e.reps || 1) > 1 ? '×' + e.reps : ''}${marks.length ? ' ' + marks.join('·') : ''}${patEmpty ? ' ⚠ PATTERN ' + PATTERN_NAMES[e.p] + ' ER TOMT' : ''}`;
-    b.innerHTML = `<b>${e.name || PATTERN_NAMES[e.p]}</b><span class="sub">${subTxt()}</span><span class="grip"></span>`;
-    b.title = 'Klik: redigér · træk: flyt · træk i kanten: gentagelser · højreklik: menu';
-    b.onpointerdown = ev => {
-      if (ev.button !== 0) return;
-      const r = b.getBoundingClientRect();
-      entDrag = {
-        i, el: b, x0: ev.clientX, reps0: e.reps || 1,
-        loopPx: r.width / (e.reps || 1),
-        mode: (ev.clientX > r.right - 12) ? 'resize' : 'pending',
-        moved: false, target: null,
-      };
-      try { b.setPointerCapture(ev.pointerId); } catch (e2) {}
-    };
-    b.onpointermove = ev => {
-      if (!entDrag || entDrag.el !== b) return;
-      const dx = ev.clientX - entDrag.x0;
-      if (entDrag.mode === 'pending' && Math.abs(dx) > 8) { entDrag.mode = 'drag'; b.classList.add('dragging'); }
-      if (entDrag.mode === 'resize') {
-        const nr = Math.max(1, Math.min(64, Math.round(entDrag.reps0 + dx / entDrag.loopPx)));
-        if (nr !== (e.reps || 1)) {
-          e.reps = nr;
-          entDrag.moved = true;
-          b.style.width = (entDrag.loopPx * nr) + 'px';
-          b.querySelector('.sub').textContent = subTxt();
-        }
-      } else if (entDrag.mode === 'drag') {
-        entDrag.moved = true;
-        const seg = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.arrEnt');
-        headIn.querySelectorAll('.arrEnt').forEach(x => x.classList.remove('dropL', 'dropR'));
-        if (seg && seg !== b) {
-          const r2 = seg.getBoundingClientRect();
-          const before = ev.clientX < r2.left + r2.width / 2;
-          seg.classList.add(before ? 'dropL' : 'dropR');
-          entDrag.target = { i: +seg.dataset.i, before };
-        } else {
-          entDrag.target = null;
-        }
-      }
-    };
-    const endEnt = () => {
-      if (!entDrag || entDrag.el !== b) return;
-      const d = entDrag;
-      entDrag = null;
-      b.classList.remove('dragging');
-      if (d.mode === 'drag' && d.target) {
-        const item = st.song.splice(d.i, 1)[0];
-        let to = d.target.i + (d.target.before ? 0 : 1);
-        if (d.i < to) to--;
-        st.song.splice(to, 0, item);
-        suppressEntClick = true;
-        persist(); renderSong();
-        return;
-      }
-      if (d.moved) { suppressEntClick = true; persist(); renderSong(); }
-    };
-    b.onpointerup = endEnt;
-    b.onpointercancel = endEnt;
-    b.onclick = ev => {
-      if (suppressEntClick) { suppressEntClick = false; return; }
-      openSongEntry(ev, i);
-    };
-    b.oncontextmenu = ev => { ev.preventDefault(); entryMenu(ev, i); };
-    headIn.appendChild(b);
-  });
-  head.appendChild(headIn);
-  wrap.appendChild(head);
-  // spor-baner: hver blok er en CLIP — klik = mute, traek = flyt lyden (alt = kopiér),
-  // hoejreklik = clip-editor (kilde-pattern, transponering, niveau, filter)
-  let cellDrag = null;
+  // SPOR-BANER med frie clips
   st.tracks.forEach((tr, ti) => {
     const row = document.createElement('div');
     row.className = 'arrRow';
@@ -1044,153 +931,180 @@ function renderArr() {
       <input class="arrLvl" type="range" min="0" max="1" step="0.01" value="${tr.level}" title="Niveau: ${tr.name}">`;
     lab.querySelector('.arrLvl').oninput = ev => { tr.level = +ev.target.value; persist(); player.refreshTrackGains(); };
     row.appendChild(lab);
-    const lanes = document.createElement('div');
-    lanes.className = 'arrLanes';
-    entries.forEach((e, i) => {
-      const cell = document.createElement('div');
-      const cOv = e.cells ? e.cells[ti] : null;
-      const effP = cOv && cOv.p != null ? cOv.p : e.p;
-      const muted = !!(e.mutes && e.mutes[ti]);
-      const mk = trackMarksURI(ti, effP, '#0b0b0d');
-      cell.className = 'arrCell' + (muted ? ' muted' : '') + (!mk ? ' nodata' : '');
-      cell.style.width = wPct(e);
-      cell.dataset.ti = ti;
-      cell.dataset.i = i;
-      if (mk && !muted) {
-        cell.style.background = tr.color;
-        cell.style.backgroundImage = mk.uri;
-        cell.style.backgroundRepeat = 'repeat-x';
-        cell.style.backgroundSize = (mk.L / entSteps(e) * 100) + '% 100%';
-        if ((cOv?.lvl ?? 1) < 0.95) cell.style.opacity = 0.35 + 0.65 * cOv.lvl;
+    const lane = document.createElement('div');
+    lane.className = 'arrLane';
+    lane.style.backgroundSize = (100 / totalBars) + '% 100%'; // takt-grid
+    // dobbeltklik paa tom bane = ny clip med det aktuelle pattern
+    lane.ondblclick = ev => {
+      if (ev.target !== lane) return;
+      if (!trackHasData(st.curPattern, ti)) { toast('Pattern ' + PATTERN_NAMES[st.curPattern] + ' har intet på ' + tr.name, true); return; }
+      const r = lane.getBoundingClientRect();
+      if (!r.width) return;
+      const bar = Math.floor((ev.clientX - r.left) / r.width * totalBars);
+      const c = addClip(ti, bar, 4, st.curPattern);
+      selClip = c.id;
+      persist(); renderSongUI();
+    };
+    for (const c of st.arr.clips.filter(x => x.tr === ti)) {
+      const elC = document.createElement('button');
+      elC.className = 'arrClip' + (selClip === c.id ? ' sel' : '');
+      elC.style.left = xPct(c.at) + '%';
+      elC.style.width = xPct(c.len) + '%';
+      elC.style.background = tr.color;
+      const mk = trackMarksURI(ti, c.p, '#0b0b0d');
+      if (mk) {
+        elC.style.backgroundImage = mk.uri;
+        elC.style.backgroundRepeat = 'repeat-x';
+        elC.style.backgroundSize = (mk.L / c.len * 100) + '% 100%';
       }
-      // clip-badges: kilde-pattern og transponering
-      const badges = [];
-      if (cOv && cOv.p != null && cOv.p !== e.p) badges.push(PATTERN_NAMES[cOv.p]);
-      if (cOv?.n) badges.push((cOv.n > 0 ? '+' : '') + cOv.n);
-      if (cOv?.cut != null) badges.push('FLT');
-      if (badges.length) cell.innerHTML = `<span class="cellBadge">${badges.join(' ')}</span>`;
-      cell.title = mk
-        ? `${tr.name}${cOv && cOv.p != null ? ' (fra pattern ' + PATTERN_NAMES[cOv.p] + ')' : ''} — klik: mute · træk: flyt (alt: kopiér) · højreklik: redigér clip`
-        : `${tr.name} er tom her — højreklik/klik for at hente lyd fra et andet pattern`;
-      cell.onpointerdown = ev => {
-        if (ev.button !== 0 || !mk || muted) return;
-        cellDrag = { ti, i, x0: ev.clientX, y0: ev.clientY, moved: false, el: cell, target: null };
-        try { cell.setPointerCapture(ev.pointerId); } catch (e2) {}
+      if ((c.lvl ?? 1) < 0.95) elC.style.opacity = 0.35 + 0.65 * c.lvl;
+      const badges = [PATTERN_NAMES[c.p]];
+      if (c.n) badges.push((c.n > 0 ? '+' : '') + c.n);
+      if (c.cut != null) badges.push('FLT');
+      elC.innerHTML = `<span class="cellBadge">${badges.join(' ')}</span>`;
+      elC.title = `${tr.name} · pattern ${PATTERN_NAMES[c.p]} · ${c.len / BAR} takter — træk: flyt (alt: kopiér) · kanter: længde · dobbeltklik/højreklik: redigér · Delete: slet`;
+      // pointer: flyt / resize venstre/hoejre kant / alt-kopiér
+      let cd = null;
+      elC.onpointerdown = ev => {
+        if (ev.button !== 0) return;
+        ev.stopPropagation();
+        const r = elC.getBoundingClientRect();
+        const laneR = lane.getBoundingClientRect();
+        const pxPerStep = laneR.width / total;
+        let mode = 'move';
+        if (ev.clientX < r.left + 9) mode = 'l';
+        else if (ev.clientX > r.right - 9) mode = 'r';
+        cd = { mode, x0: ev.clientX, at0: c.at, len0: c.len, pxPerStep, moved: false };
+        selClip = c.id;
+        try { elC.setPointerCapture(ev.pointerId); } catch (e2) {}
       };
-      cell.onpointermove = ev => {
-        if (!cellDrag || cellDrag.el !== cell) return;
-        if (!cellDrag.moved && Math.abs(ev.clientX - cellDrag.x0) < 8 && Math.abs(ev.clientY - cellDrag.y0) < 8) return;
-        cellDrag.moved = true;
-        cell.classList.add('dragging');
-        const t2 = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.arrCell');
-        lanes.parentElement.parentElement.querySelectorAll('.arrCell.dropOk').forEach(x => x.classList.remove('dropOk'));
-        if (t2 && +t2.dataset.ti === ti && +t2.dataset.i !== i) {
-          t2.classList.add('dropOk');
-          cellDrag.target = +t2.dataset.i;
+      elC.onpointermove = ev => {
+        if (!cd) return;
+        const dSteps = Math.round((ev.clientX - cd.x0) / cd.pxPerStep / BAR) * BAR;
+        if (!cd.moved && dSteps === 0) return;
+        cd.moved = true;
+        if (cd.mode === 'move') {
+          cd.newAt = Math.max(0, cd.at0 + dSteps);
+          elC.style.left = xPct(cd.newAt) + '%';
+          elC.classList.add('dragging');
+        } else if (cd.mode === 'r') {
+          cd.newLen = Math.max(BAR, cd.len0 + dSteps);
+          elC.style.width = xPct(cd.newLen) + '%';
         } else {
-          cellDrag.target = null;
+          const d2 = Math.min(dSteps, cd.len0 - BAR);
+          cd.newAt = Math.max(0, cd.at0 + d2);
+          cd.newLen = cd.len0 - (cd.newAt - cd.at0);
+          elC.style.left = xPct(cd.newAt) + '%';
+          elC.style.width = xPct(cd.newLen) + '%';
         }
       };
-      const endCell = ev => {
-        if (!cellDrag || cellDrag.el !== cell) return;
-        const d = cellDrag;
-        cellDrag = null;
-        cell.classList.remove('dragging');
-        if (d.moved) {
-          suppressEntClick = false;
-          if (d.target != null) {
-            const srcE = entries[d.i], tgtE = entries[d.target];
-            tgtE.cells = tgtE.cells || new Array(8).fill(null);
-            tgtE.cells[ti] = { ...(cOv || {}), p: effP };
-            if (tgtE.mutes) { tgtE.mutes[ti] = false; if (!tgtE.mutes.some(Boolean)) tgtE.mutes = null; }
-            const copy = ev && ev.altKey;
-            if (!copy) { // flyt: mut kilden
-              srcE.mutes = srcE.mutes || new Array(8).fill(false);
-              srcE.mutes[ti] = true;
-            }
-            persist(); renderSong();
-            toast((copy ? 'Kopierede ' : 'Flyttede ') + tr.name + ' til trin ' + (d.target + 1));
+      const endC = ev => {
+        if (!cd) return;
+        const d = cd;
+        cd = null;
+        elC.classList.remove('dragging');
+        if (!d.moved) { persist(); renderSongUI(); return; } // klik = valgt
+        if (d.mode === 'move') {
+          if (ev && ev.altKey) {
+            placeClip({ ...snapshot(c), id: newClipId(), at: d.newAt ?? c.at });
+            toast('Clip kopieret');
           } else {
-            renderSong();
+            c.at = d.newAt ?? c.at;
+            placeClip(c);
           }
-          cell._suppress = true;
-          setTimeout(() => { cell._suppress = false; }, 0);
+        } else {
+          if (d.newAt != null) c.at = d.newAt;
+          if (d.newLen != null) c.len = d.newLen;
+          placeClip(c);
         }
+        persist(); renderSongUI();
       };
-      cell.onpointerup = endCell;
-      cell.onpointercancel = () => endCell(null);
-      cell.onclick = ev => {
-        if (cell._suppress) { cell._suppress = false; return; }
-        if (!mk) { openCellEditor(ev, i, ti); return; }
-        e.mutes = e.mutes || new Array(8).fill(false);
-        e.mutes[ti] = !e.mutes[ti];
-        if (!e.mutes.some(Boolean)) e.mutes = null;
-        persist(); renderSong();
-      };
-      cell.oncontextmenu = ev => { ev.preventDefault(); openCellEditor(ev, i, ti); };
-      lanes.appendChild(cell);
-    });
-    row.appendChild(lanes);
+      elC.onpointerup = endC;
+      elC.onpointercancel = () => endC(null);
+      elC.ondblclick = ev => { ev.stopPropagation(); openClipEditor(ev, c); };
+      elC.oncontextmenu = ev => { ev.preventDefault(); selClip = c.id; openClipEditor(ev, c); };
+      lane.appendChild(elC);
+    }
+    row.appendChild(lane);
     wrap.appendChild(row);
   });
-  // automations-baner: traek for at saette breakpoint ved trin-slut, dobbeltklik fjerner
-  const makeAutoLane = (key, label, cls, initV) => {
+  // AUTOMATIONS-BANER: frie punkter — klik/traek = saet/flyt, dobbeltklik paa punkt = fjern
+  const makeAutoLane = (key, label, cls) => {
     const autoRow = document.createElement('div');
     autoRow.className = 'arrRow arrAuto';
     autoRow.innerHTML = `<div class="arrLabel">${label}</div>`;
-    const lane = document.createElement('div');
-    lane.className = 'arrLanes';
+    const laneEl = document.createElement('div');
+    laneEl.className = 'arrLanes';
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('class', 'autoSvg ' + cls);
     svg.setAttribute('preserveAspectRatio', 'none');
     svg.setAttribute('viewBox', '0 0 1000 100');
-    lane.appendChild(svg);
-    autoRow.appendChild(lane);
+    laneEl.appendChild(svg);
+    autoRow.appendChild(laneEl);
     wrap.appendChild(autoRow);
+    const pts = () => st.arr.auto[key];
     const draw = () => {
-      const pts = [[0, initV]];
-      let a2 = 0;
-      for (const e of entries) {
-        a2 += entSteps(e);
-        if (e[key] !== undefined && e[key] !== null) pts.push([a2 / total, e[key]]);
+      const P = pts().slice().sort((a, b) => a.at - b.at);
+      let path;
+      if (!P.length) {
+        path = '';
+      } else {
+        const segs = [`M0,${((1 - P[0].v) * 100).toFixed(1)}`];
+        for (const p of P) segs.push(`L${(p.at / total * 1000).toFixed(1)},${((1 - p.v) * 100).toFixed(1)}`);
+        segs.push(`L1000,${((1 - P[P.length - 1].v) * 100).toFixed(1)}`);
+        path = segs.join(' ');
       }
-      pts.push([1, pts[pts.length - 1][1]]);
-      const path = pts.map(([x, v], j) => `${j ? 'L' : 'M'}${(x * 1000).toFixed(1)},${((1 - v) * 100).toFixed(1)}`).join(' ');
       svg.innerHTML = `<line x1="0" y1="50" x2="1000" y2="50" class="mid"/>`
-        + `<path d="${path}" class="curve"/>`
-        + pts.slice(1, -1).map(([x, v]) =>
-          `<circle cx="${(x * 1000).toFixed(1)}" cy="${((1 - v) * 100).toFixed(1)}" r="6" class="pt"/>`).join('');
+        + (path ? `<path d="${path}" class="curve"/>` : '')
+        + P.map(p => `<circle cx="${(p.at / total * 1000).toFixed(1)}" cy="${((1 - p.v) * 100).toFixed(1)}" r="6" class="pt"/>`).join('');
     };
-    const entryAtX = frac => {
-      let a2 = 0;
-      for (const e of entries) {
-        a2 += entSteps(e) / total;
-        if (frac <= a2) return e;
+    const evPos = ev => {
+      const r = svg.getBoundingClientRect();
+      return {
+        s: Math.max(0, Math.min(total, (ev.clientX - r.left) / r.width * total)),
+        v: Math.max(0, Math.min(1, 1 - (ev.clientY - r.top) / r.height)),
+        tolS: total * 0.015,
+      };
+    };
+    let dragPt = null;
+    svg.onpointerdown = ev => {
+      const { s, v, tolS } = evPos(ev);
+      let nearest = null;
+      for (const p of pts()) if (Math.abs(p.at - s) < tolS && (!nearest || Math.abs(p.at - s) < Math.abs(nearest.at - s))) nearest = p;
+      if (!nearest) {
+        nearest = { at: Math.round(s / (BAR / 2)) * (BAR / 2), v: Math.round(v * 100) / 100 };
+        pts().push(nearest);
       }
-      return entries[entries.length - 1];
+      dragPt = nearest;
+      try { svg.setPointerCapture(ev.pointerId); } catch (e2) {}
+      dragPt.v = Math.round(v * 100) / 100;
+      draw();
     };
-    let dragging = false;
-    const setFrom = ev => {
-      const r = svg.getBoundingClientRect();
-      if (!r.width) return;
-      const frac = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width));
-      const v = Math.max(0, Math.min(1, 1 - (ev.clientY - r.top) / r.height));
-      entryAtX(frac)[key] = Math.round(v * 100) / 100;
-      persist(); draw(); // fuld re-render foerst ved pointerup (ellers ryger pointer capture)
+    svg.onpointermove = ev => {
+      if (!dragPt) return;
+      const { s, v } = evPos(ev);
+      dragPt.at = Math.max(0, Math.round(s / (BAR / 2)) * (BAR / 2));
+      dragPt.v = Math.round(v * 100) / 100;
+      draw();
     };
-    svg.onpointerdown = ev => { dragging = true; try { svg.setPointerCapture(ev.pointerId); } catch (e2) {} setFrom(ev); };
-    svg.onpointermove = ev => { if (dragging) setFrom(ev); };
-    svg.onpointerup = () => { dragging = false; renderSong(); };
+    svg.onpointerup = () => {
+      if (!dragPt) return;
+      dragPt = null;
+      pts().sort((a, b) => a.at - b.at);
+      persist(); renderSongUI();
+    };
     svg.ondblclick = ev => {
-      const r = svg.getBoundingClientRect();
-      delete entryAtX(Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)))[key];
-      persist(); renderSong();
+      const { s, tolS } = evPos(ev);
+      const P = pts();
+      let bi = -1;
+      for (let i = 0; i < P.length; i++) if (Math.abs(P[i].at - s) < tolS * 1.5 && (bi < 0 || Math.abs(P[i].at - s) < Math.abs(P[bi].at - s))) bi = i;
+      if (bi >= 0) { P.splice(bi, 1); persist(); renderSongUI(); }
     };
     draw();
   };
-  makeAutoLane('mf', 'MASTER FLT', 'mf', st.masterFilter ?? 0.5);
-  makeAutoLane('vol', 'VOLUMEN', 'vol', st.masterVol ?? 0.9);
-  makeAutoLane('pump', 'PUMP', 'pump', st.pumpFx ?? 0);
+  makeAutoLane('mf', 'MASTER FLT', 'mf');
+  makeAutoLane('vol', 'VOLUMEN', 'vol');
+  makeAutoLane('pump', 'PUMP', 'pump');
   // playhead
   const ph = document.createElement('div');
   ph.id = 'arrPlayhead';
@@ -1200,16 +1114,9 @@ function renderArr() {
   el.appendChild(scroller);
   const hint = document.createElement('div');
   hint.id = 'arrHint';
-  hint.textContent = 'Blokke (clips): klik = mute · TRÆK = flyt lyden til et andet trin (alt+træk = kopiér) · højreklik = clip-editor (kilde-pattern, tone, niveau, filter) · Linjal: klik = spil herfra, træk = loop · Hoveder: klik = redigér, træk = flyt, kant = gentagelser, højreklik = menu · Baner: træk = automation · Tab = steps';
+  hint.textContent = 'Clips: træk = flyt (alt = kopiér) · kanter = længde · dobbeltklik/højreklik = redigér (kilde, tone, niveau, filter, split) · Delete = slet valgt · Dobbeltklik på tom bane = ny clip med valgt pattern · Linjal: klik = spil herfra, træk = loop · Markør-række: dobbeltklik = markør/tempo/riser/boom · Baner: klik/træk = automation-punkter · Tab = steps';
   el.appendChild(hint);
 }
-$('songLoopBtn').onclick = () => { st.songLoop = !st.songLoop; persist(); renderSong(); };
-$('modePattern').onclick = () => { st.mode = 'pattern'; persist(); renderSong(); };
-$('modeSong').onclick = () => {
-  if (!st.song.length) { toast('Tilføj patterns til sangen først (+ TILFØJ)', true); return; }
-  st.mode = 'song';
-  persist(); renderSong();
-};
 
 // ---------- transport ----------
 const playBtn = $('playBtn');
@@ -1220,7 +1127,7 @@ function togglePlay() {
     playBtn.classList.remove('playing');
     clearPlayLEDs();
   } else {
-    player.play(st.mode === 'song' ? (st._startEntry ?? 0) : 0);
+    player.play(st.mode === 'song' ? (st._startBar ?? 0) * BAR : 0);
     playBtn.textContent = '■';
     playBtn.classList.add('playing');
   }
@@ -1236,6 +1143,12 @@ $('fillBtn').onpointerleave = () => setFill(false);
 window.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && curView === 'arr' && selClip) {
+    st.arr.clips = st.arr.clips.filter(x => x.id !== selClip);
+    selClip = null;
+    persist(); renderSongUI();
+    return;
+  }
   if (e.shiftKey && /^Digit[1-8]$/.test(e.code)) {          // shift+1-8 = mute-toggle (performance)
     const i = +e.code.slice(5) - 1;
     st.tracks[i].mute = !st.tracks[i].mute;
@@ -1263,59 +1176,67 @@ function mfLabel() {
 }
 $('projName').addEventListener('input', () => { st.name = $('projName').value; persist(); });
 
-// ---------- JAM-optagelse: performances fanges som song-kaede ----------
-let jam = null; // {entries: [], lastKey}
+// ---------- JAM-optagelse: performances fanges som clips i arrangementet ----------
+let jam = null;
 $('jamBtn').onclick = () => {
   if (jam) { finishJam(); return; }
-  if (st.mode !== 'pattern') { st.mode = 'pattern'; persist(); renderSong(); }
-  jam = { entries: [], lastKey: null };
-  // egen timer (ikke rAF): capture skal koere selv naar fanen er i baggrunden
+  if (st.mode !== 'pattern') { st.mode = 'pattern'; persist(); renderSongUI(); }
+  jam = { clips: [], open: new Array(8).fill(null), atSteps: 0, lastKey: null };
   jam.timer = setInterval(() => {
     if (!jam) return;
     const pos = player.position();
-    if (pos && st.mode === 'pattern') jamCapture(pos);
+    if (pos && st.mode === 'pattern' && pos.pattern != null) jamCapture(pos);
   }, 100);
   $('jamBtn').classList.add('on');
   $('jamBtn').textContent = '● JAM…';
   if (!player.playing) togglePlay();
-  toast('JAM optager: skift patterns og mutes — tryk ● igen for at gemme som sang');
+  toast('JAM optager: skift patterns og mutes — tryk ● igen for at gemme som arrangement');
 };
 function finishJam() {
   clearInterval(jam.timer);
-  const entries = jam.entries;
+  const { clips, open } = jam;
+  for (const c of open) if (c) clips.push(c);
+  const atSteps = jam.atSteps;
   jam = null;
   $('jamBtn').classList.remove('on');
   $('jamBtn').textContent = '● JAM';
-  if (!entries.length) { toast('Intet optaget endnu', true); return; }
-  if (entries.every(e => !e.mutes.some(Boolean))) entries.forEach(e => { e.mutes = null; });
-  st.song = entries;
-  persist(); renderSong();
-  toast(`Jam gemt som song-kæde: ${entries.length} trin — skift til SONG og hør den`);
+  if (!clips.length) { toast('Intet optaget endnu', true); return; }
+  st.arr = { ...emptyArr(), clips };
+  persist(); renderSongUI();
+  toast(`Jam gemt som arrangement: ${clips.length} clips over ${Math.ceil(atSteps / BAR)} takter — Tab for at se det`);
 }
 function jamCapture(pos) {
   const len = st.patterns[pos.pattern].len;
   const key = pos.pattern + ':' + Math.floor(pos.abs / len);
   if (jam.lastKey === key) return;
   jam.lastKey = key;
-  const mutes = st.tracks.map(t => !!t.mute);
-  const last = jam.entries[jam.entries.length - 1];
-  if (last && last.p === pos.pattern && JSON.stringify(last.mutes) === JSON.stringify(mutes)) {
-    last.reps++;
-  } else {
-    jam.entries.push({ p: pos.pattern, reps: 1, mutes });
+  for (let tr = 0; tr < 8; tr++) {
+    const active = !st.tracks[tr].mute && trackHasData(pos.pattern, tr);
+    const o = jam.open[tr];
+    if (active) {
+      if (o && o.p === pos.pattern) {
+        o.len += len;
+      } else {
+        if (o) jam.clips.push(o);
+        jam.open[tr] = { id: newClipId(), tr, at: jam.atSteps, len, p: pos.pattern };
+      }
+    } else if (o) {
+      jam.clips.push(o);
+      jam.open[tr] = null;
+    }
   }
-  $('jamBtn').textContent = `● JAM (${jam.entries.reduce((a, e) => a + e.reps, 0)})`;
+  jam.atSteps += len;
+  $('jamBtn').textContent = `● JAM (${Math.ceil(jam.atSteps / BAR)} takter)`;
 }
 
-// spillende kolonne-LED + pattern-chip (polymeter: hvert spor sin egen kolonne)
+// spillende kolonne-LED + pattern-chip + arrangement-playhead
 let lastLED = null, lastShownPattern = null;
 function clearPlayLEDs() {
   document.querySelectorAll('.stp.playcol').forEach(x => x.classList.remove('playcol'));
-  document.querySelectorAll('.patChip.playing, .songChip.playing').forEach(x => x.classList.remove('playing'));
+  document.querySelectorAll('.patChip.playing').forEach(x => x.classList.remove('playing'));
   lastLED = null;
 }
 function tick() {
-  // koeet pattern-skift anvendt af motoren -> gengiv grid'et
   if (lastShownPattern !== st.curPattern) {
     lastShownPattern = st.curPattern;
     renderAll();
@@ -1326,43 +1247,43 @@ function tick() {
     if (key !== lastLED) {
       lastLED = key;
       document.querySelectorAll('.stp.playcol').forEach(x => x.classList.remove('playcol'));
-      if (pos.pattern === st.curPattern) {
+      if (pos.pattern != null && pos.pattern === st.curPattern) {
         document.querySelectorAll('#seq .trk').forEach((row, ti) => {
           const idx = pos.abs % tlenOf(ti);
           row.querySelector('.steps')?.children[idx]?.classList.add('playcol');
         });
       }
       document.querySelectorAll('.patChip').forEach((c, i) => c.classList.toggle('playing', i === pos.pattern && player.playing));
-      document.querySelectorAll('.songChip').forEach((c, i) => c.classList.toggle('playing', i === pos.songIdx && player.playing));
-      // playhead paa arrangement-tidslinjen + overview-strip + follow-scroll
-      const ph = document.getElementById('arrPlayhead');
-      if (ph) {
-        const miniPh = document.getElementById('arrMiniPh');
-        if (pos.songStep != null && st.song.length) {
-          const frac = pos.songStep / Math.max(1, songTotalSteps());
-          ph.hidden = false;
-          ph.style.left = `calc(122px + (100% - 122px) * ${frac})`;
-          if (miniPh) { miniPh.hidden = false; miniPh.style.left = (frac * 100) + '%'; }
-          // follow: hold playheaden synlig naar der er zoomet ind
-          const sc = document.getElementById('arrScroll');
-          const wrap = document.getElementById('arrWrap');
-          if (sc && wrap && wrap.clientWidth > sc.clientWidth + 4) {
-            const phX = 122 + (wrap.clientWidth - 122) * frac;
-            if (phX < sc.scrollLeft + 130 || phX > sc.scrollLeft + sc.clientWidth - 60) {
-              sc.scrollLeft = Math.max(0, phX - sc.clientWidth * 0.35);
-            }
+    }
+    // playhead + overview + follow
+    const ph = document.getElementById('arrPlayhead');
+    if (ph) {
+      const miniPh = document.getElementById('arrMiniPh');
+      if (pos.songStep != null) {
+        const frac = pos.songStep / Math.max(1, lastViewSteps);
+        ph.hidden = false;
+        ph.style.left = `calc(122px + (100% - 122px) * ${Math.min(1, frac)})`;
+        if (miniPh) { miniPh.hidden = false; miniPh.style.left = (frac * 100) + '%'; }
+        const sc = document.getElementById('arrScroll');
+        const wrap = document.getElementById('arrWrap');
+        if (sc && wrap && wrap.clientWidth > sc.clientWidth + 4) {
+          const phX = 122 + (wrap.clientWidth - 122) * frac;
+          if (phX < sc.scrollLeft + 130 || phX > sc.scrollLeft + sc.clientWidth - 60) {
+            sc.scrollLeft = Math.max(0, phX - sc.clientWidth * 0.35);
           }
-        } else {
-          ph.hidden = true;
-          if (miniPh) miniPh.hidden = true;
         }
+      } else {
+        ph.hidden = true;
+        if (miniPh) miniPh.hidden = true;
       }
     }
-    // filter-automationen bevæger master-slideren live
-    if (player.autoMF != null && st.mode === 'song') {
-      $('mFilter').value = player.autoMF;
-      const v = player.autoMF;
-      $('mFilterVal').textContent = Math.abs(v - 0.5) < 0.01 ? 'OPEN' : (v < 0.5 ? 'LP' : 'HP');
+    if (st.mode === 'song') {
+      if (player.autoMF != null) {
+        $('mFilter').value = player.autoMF;
+        const v = player.autoMF;
+        $('mFilterVal').textContent = Math.abs(v - 0.5) < 0.01 ? 'OPEN' : (v < 0.5 ? 'LP' : 'HP');
+      }
+      if (player.autoVol != null) $('mVol').value = player.autoVol;
     }
   }
   requestAnimationFrame(tick);
@@ -1450,7 +1371,7 @@ $('exportBtn').onclick = async () => {
   btn.disabled = true;
   btn.textContent = 'RENDERER…';
   try {
-    const what = (st.mode === 'song' && st.song.length) ? 'song' : 'pattern';
+    const what = (st.mode === 'song' && st.arr.clips.length) ? 'song' : 'pattern';
     const wav = await renderWav(st, what);
     const name = ($('projName').value || '').trim() || 'Simons Track';
     let saved = false;
@@ -1493,7 +1414,7 @@ function syncTop() {
 }
 function renderAll() {
   renderPatternChips();
-  renderSong();   // gen-renderer ogsaa arrangement-viewet naar det er synligt
+  renderSongUI();   // opdaterer ogsaa arrangement-viewet naar det er synligt
   renderSeq();
   renderPanel();
 }

@@ -151,16 +151,58 @@ input[type="number"], input[type="text"], #projName {
 #arrTb b { color: var(--text); font-size: 10px; min-width: 36px; text-align: center; }
 #arrLoopInfo { color: var(--amber); }
 #arrMini {
-  flex: 0 0 12px;
-  display: flex; gap: 1px;
+  flex: 0 0 14px;
   position: relative;
   border-radius: 3px; overflow: hidden;
   cursor: pointer;
+  background: var(--panel);
+  border: 1px solid var(--line);
 }
-.miniSeg { opacity: 0.55; }
-.miniSeg:hover { opacity: 1; }
-.miniSeg.inLoop { opacity: 0.95; box-shadow: inset 0 -3px 0 var(--amber); }
+.miniClip { position: absolute; height: 12.5%; opacity: 0.8; pointer-events: none; }
 #arrMiniPh { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; pointer-events: none; }
+.arrSum { font-size: 10px; font-weight: 800; letter-spacing: 0.05em; color: var(--dim); white-space: nowrap; }
+
+/* markoer-raekke */
+.arrRow.arrMks { flex: 0 0 20px; }
+.mkLane { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.mkFlag {
+  position: absolute; top: 1px; bottom: 1px;
+  padding: 0 5px; font-size: 9px; font-weight: 900; letter-spacing: 0.04em;
+  color: var(--acid); background: #1a2205; border: 1px solid #3a4a12; border-radius: 3px;
+  white-space: nowrap;
+}
+.mkFlag.tempo { color: var(--text); background: var(--panel2); border-color: var(--line2); }
+.mkFlag.fx { color: var(--hot); background: #1c0a0d; border-color: #55202a; }
+.mkFlag.riser { background: linear-gradient(90deg, #1c0a0d, #55202a); text-align: left; }
+
+/* frie clips paa spor-banerne */
+.arrLane {
+  flex: 1; position: relative; min-width: 0;
+  background-color: var(--panel);
+  background-image: linear-gradient(90deg, var(--line) 0 1px, transparent 1px);
+  background-repeat: repeat-x;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.arrClip {
+  position: absolute; top: 1px; bottom: 1px;
+  border: 1px solid #0008;
+  border-radius: 3px;
+  padding: 0;
+  cursor: grab;
+  touch-action: none;
+  overflow: hidden;
+}
+.arrClip:hover { filter: brightness(1.12); }
+.arrClip.sel { outline: 2px solid #fff; outline-offset: 0; z-index: 3; }
+.arrClip.dragging { opacity: 0.6; cursor: grabbing; z-index: 4; }
+.arrClip::before, .arrClip::after {
+  content: ''; position: absolute; top: 0; bottom: 0; width: 7px;
+  cursor: ew-resize;
+}
+.arrClip::before { left: 0; }
+.arrClip::after { right: 0; }
 #arrScroll { flex: 1; min-height: 0; overflow: auto; }
 #arrWrap { position: relative; display: flex; flex-direction: column; gap: 3px; min-width: 100%; height: 100%; }
 .arrRow { display: flex; align-items: stretch; gap: 6px; flex: 1; min-height: 22px; }

@@ -163,51 +163,66 @@ export function setMasterFilter(rig, v) {
   rig.hp.frequency.value = f.hpF;
 }
 
-// ---------- song-kaede (arrangements-trin) ----------
-// et trin: {p: patternIdx, reps: antal gennemloeb, mutes: [8×bool]|null, name,
-//           bpm: tempo-override for trinnet (null = sangens BPM),
-//           mf/vol/pump: automations-vaerdier ved trinnets SLUT (null = ingen breakpoint),
-//           riser: bool, boom: bool, fillLast: bool}
+// ---------- ARRANGEMENT (Ableton-model: frie clips pr. spor) ----------
+// st.arr = {
+//   clips:   [{id, tr, at, len, p, n, lvl, cut}]  — at/len i 16.-dels-steps (snap = takt),
+//            clip'en looper kilde-patternets spor-raekke: idx = (s - at) % sporlaengde
+//   markers: [{at, name}]                          — navngivne locators
+//   tempo:   [{at, bpm}]                           — tempo-skift paa tidslinjen
+//   fx:      [{at, type:'riser'|'boom', len}]      — build-effekter
+//   auto:    {mf:[{at,v}], vol:[{at,v}], pump:[{at,v}]} — frie breakpoints
+//   loopA/loopB: takt-indeks for loop-brace (null = intet loop)
+// }
+export const BAR = 16;
+export function emptyArr() {
+  return { clips: [], markers: [], tempo: [], fx: [], auto: { mf: [], vol: [], pump: [] }, loopA: null, loopB: null };
+}
+// gamle projekters song-kaede (til migration i app-laget)
 export function songEntry(e) {
   return typeof e === 'number' ? { p: e, reps: 1, mutes: null } : e;
 }
 export function entrySteps(st, e) { return st.patterns[e.p].len * (e.reps || 1); }
-export function entryStartSteps(st, idx) {
-  let a = 0;
-  for (let i = 0; i < Math.min(idx, st.song.length); i++) a += entrySteps(st, songEntry(st.song[i]));
-  return a;
+
+export function arrLenSteps(st) {
+  const a = st.arr;
+  let m = 0;
+  for (const c of a.clips) m = Math.max(m, c.at + c.len);
+  for (const f of a.fx) m = Math.max(m, f.at + (f.len || BAR));
+  for (const mk of a.markers) m = Math.max(m, mk.at + BAR);
+  return Math.max(BAR, Math.ceil(m / BAR) * BAR);
 }
-export function songDurationSec(st) {
-  let sec = 0;
-  for (const raw of st.song) {
-    const e = songEntry(raw);
-    sec += entrySteps(st, e) * (60 / (e.bpm || st.bpm) / 4);
+export function clipAt(st, tr, s) {
+  for (const c of st.arr.clips) {
+    if (c.tr === tr && s >= c.at && s < c.at + c.len) return c;
   }
-  return sec;
+  return null;
 }
-// automation: breakpoints ved trin-slut, lineaer interpolation imellem (mf/vol/pump)
-export function buildAuto(st, key) {
-  const pts = [];
-  let acc = 0;
-  for (const raw of st.song) {
-    const e = songEntry(raw);
-    acc += entrySteps(st, e);
-    if (e[key] !== undefined && e[key] !== null) pts.push({ atStep: acc, v: e[key] });
+export function tempoAt(st, s) {
+  let b = st.bpm;
+  let bestAt = -1;
+  for (const t of st.arr.tempo) {
+    if (t.at <= s && t.at > bestAt && t.bpm) { b = t.bpm; bestAt = t.at; }
   }
-  return { pts, total: acc };
+  return b;
 }
-export function autoAt(auto, initV, s) {
-  const { pts } = auto;
-  if (!pts.length) return null;
-  let prevStep = 0, prevV = initV;
-  for (const p of pts) {
-    if (s <= p.atStep) {
-      const span = p.atStep - prevStep;
-      return span <= 0 ? p.v : prevV + (p.v - prevV) * ((s - prevStep) / span);
+// frie automations-punkter: hold foer foerste, lineaer imellem, hold efter sidste
+export function autoValAt(pts, s) {
+  if (!pts || !pts.length) return null;
+  if (s <= pts[0].at) return pts[0].v;
+  for (let i = 1; i < pts.length; i++) {
+    if (s <= pts[i].at) {
+      const a = pts[i - 1], b = pts[i];
+      const span = b.at - a.at;
+      return span <= 0 ? b.v : a.v + (b.v - a.v) * ((s - a.at) / span);
     }
-    prevStep = p.atStep; prevV = p.v;
   }
   return pts[pts.length - 1].v;
+}
+export function songDurationSec(st) {
+  const total = arrLenSteps(st);
+  let sec = 0;
+  for (let s = 0; s < total; s++) sec += 60 / tempoAt(st, s) / 4;
+  return sec;
 }
 
 // ---------- build-vaerktoejer: riser + boom ----------
@@ -247,15 +262,6 @@ export function schedBoom(rig, t) {
   const vs = ctx.createGain(); vs.gain.value = 0.5;
   ng.connect(vs); vs.connect(rig.vIn);
   ns.start(t); ns.stop(t + 0.6);
-}
-// ved indgang til et song-trin: mute-maske + riser/boom
-export function enterEntry(rig, st, entry, t, entryDurSec) {
-  st.tracks.forEach((tr, i) => {
-    tr._emute = !!(entry.mutes && entry.mutes[i]);
-    rig.trackGains[i].gain.setTargetAtTime(trackGainVal(st, tr), Math.max(t, 0), 0.01);
-  });
-  if (entry.riser) schedRiser(rig, t, entryDurSec);
-  if (entry.boom) schedBoom(rig, t);
 }
 
 // ---------- kick-duck (sidechain-pump) ----------
@@ -458,36 +464,63 @@ export function stepFires(step, loops, fill) {
 export function trackLen(pattern, tr) {
   return (pattern.tlen && pattern.tlen[tr]) || pattern.len;
 }
-// planlaeg ét absolut step for alle spor (polymeter: hvert spor har sin egen laengde).
-// entry.cells[tr] kan overstyre et spor i et song-trin (clip-model):
-//   {p: kilde-pattern, n: transponering, lvl: niveau 0..1, cut: cutoff-override}
-export function schedStepAbs(rig, st, pattern, absStep, t, stepDur, lastFreqs, forceFill = false, entry = null) {
+// planlaeg ét absolut step for alle spor i PATTERN-mode (polymeter pr. spor)
+export function schedStepAbs(rig, st, pattern, absStep, t, stepDur, lastFreqs, forceFill = false) {
   const loops = Math.floor(absStep / pattern.len);
   const fill = !!st._fill || forceFill;
   const src = st.duckTrack ?? 0;
   for (let tr = 0; tr < st.tracks.length; tr++) {
-    const cell = entry && entry.cells ? entry.cells[tr] : null;
-    const pat = cell && cell.p != null ? st.patterns[cell.p] : pattern;
-    const idx = absStep % trackLen(pat, tr);
-    const step = pat.steps[tr][idx];
+    const idx = absStep % trackLen(pattern, tr);
+    const step = pattern.steps[tr][idx];
     if (!stepFires(step, loops, fill)) continue;
     const track = st.tracks[tr];
-    const vScale = cell?.lvl ?? 1;
-    const nOff = cell?.n ?? 0;
-    const cellL = cell && cell.cut != null ? { ...(step.l || {}), cut: cell.cut } : step.l;
+    const r = Math.max(1, Math.min(8, step.r ?? 1));
+    for (let k = 0; k < r; k++) {
+      const subT = t + (k * stepDur) / r;
+      const subStep = k === 0 ? step : { ...step, v: (step.v ?? 1) * Math.max(0.3, 1 - k * 0.13) };
+      lastFreqs[tr] = trig(rig, tr, track.patch, subStep, subT, st, lastFreqs[tr], stepDur);
+      if (tr === src) schedDuck(rig, st, subT);
+    }
+  }
+}
+// planlaeg ét absolut step i ARRANGEMENTET: hvert spor spiller sin clip (hvis nogen)
+export function schedArrStep(rig, st, s, t, stepDur, lastFreqs) {
+  const fill = !!st._fill;
+  const src = st.duckTrack ?? 0;
+  for (let tr = 0; tr < st.tracks.length; tr++) {
+    const c = clipAt(st, tr, s);
+    if (!c) { lastFreqs[tr] = lastFreqs[tr]; continue; }
+    const pat = st.patterns[c.p];
+    const rel = s - c.at;
+    const idx = rel % trackLen(pat, tr);
+    const step = pat.steps[tr][idx];
+    const loops = Math.floor(rel / pat.len);
+    if (!stepFires(step, loops, fill)) continue;
+    const track = st.tracks[tr];
+    const vScale = c.lvl ?? 1;
+    const nOff = c.n ?? 0;
+    const clipL = c.cut != null ? { ...(step.l || {}), cut: c.cut } : step.l;
     const r = Math.max(1, Math.min(8, step.r ?? 1));
     for (let k = 0; k < r; k++) {
       const subT = t + (k * stepDur) / r;
       let subStep = step;
-      if (k > 0 || vScale !== 1 || nOff || cellL !== step.l) {
+      if (k > 0 || vScale !== 1 || nOff || clipL !== step.l) {
         subStep = { ...step,
           v: (step.v ?? 1) * vScale * (k > 0 ? Math.max(0.3, 1 - k * 0.13) : 1),
           n: (step.n || 0) + nOff,
-          l: cellL };
+          l: clipL };
       }
       lastFreqs[tr] = trig(rig, tr, track.patch, subStep, subT, st, lastFreqs[tr], stepDur);
       if (tr === src) schedDuck(rig, st, subT);
     }
+  }
+}
+// fx-events (riser/boom) der starter paa steppet
+export function schedArrFx(rig, st, s, t, stepDur) {
+  for (const f of st.arr.fx) {
+    if (f.at !== s) continue;
+    if (f.type === 'riser') schedRiser(rig, t, (f.len || 4 * BAR) * stepDur);
+    if (f.type === 'boom') schedBoom(rig, t);
   }
 }
 
@@ -503,7 +536,7 @@ export class Player {
     if (this.ctx.state === 'suspended') this.ctx.resume();
     return this.ctx;
   }
-  async play(startEntry = 0) {
+  async play(startStep = 0) {
     const ctx = this.ensureCtx();
     this.stop();
     const st = this.getState();
@@ -511,15 +544,9 @@ export class Player {
     st._pumpAuto = null;
     this.rig = await buildRig(ctx, st);
     this.playing = true;
-    this.absStep = 0;      // absolut 16.-dels-taeller i det aktuelle pattern
-    const se = Math.max(0, Math.min(startEntry, Math.max(0, st.song.length - 1)));
-    this.songPtr = se;     // position i song-kaeden
-    this.entryLoop = 0;    // gennemloeb inde i det aktuelle song-trin
-    this.songStep = entryStartSteps(st, se); // absolut step-taeller gennem sangen (automation)
-    this._entryKey = null;
+    this.absStep = 0;      // absolut 16.-dels-taeller i det aktuelle pattern (pattern-mode)
+    this.arrStep = Math.max(0, startStep); // absolut step i arrangementet (song-mode)
     this._lastPatIdx = null;
-    this.autos = { mf: buildAuto(st, 'mf'), vol: buildAuto(st, 'vol'), pump: buildAuto(st, 'pump') };
-    this.inits = { mf: st.masterFilter ?? 0.5, vol: st.masterVol ?? 0.9, pump: st.pumpFx ?? 0 };
     this.autoMF = null;
     this.autoVol = null;
     this.curBpm = st.bpm;
@@ -529,109 +556,79 @@ export class Player {
     this.timer = setInterval(() => this._tick(), 25);
     this._tick();
   }
-  // hop til et song-trin: koeet ved naeste pattern-graense under afspilning
-  jumpTo(entryIdx) {
+  // hop i arrangementet: koeet ved naeste takt-graense under afspilning
+  jumpTo(step) {
     const st = this.getState();
     if (!this.playing) return;
-    st._jumpEntry = entryIdx;
+    st._jumpStep = Math.max(0, step);
   }
   _tick() {
     const ctx = this.ctx;
     const st = this.getState();
     if (!this.rig) return;
+    const songMode = st.mode === 'song' && st.arr && st.arr.clips.length > 0;
     while (this.nextTime < ctx.currentTime + 0.14) {
-      const songMode = st.mode === 'song' && st.song.length > 0;
-      let entry = null, patIdx;
       if (songMode) {
-        entry = songEntry(st.song[this.songPtr % st.song.length]);
-        patIdx = entry.p;
-      } else {
-        patIdx = st.curPattern;
-      }
-      if (this._lastPatIdx !== null && patIdx !== this._lastPatIdx) {
-        this.absStep = 0; // nyt pattern -> alle spor resynkes (Elektron-stil)
-      }
-      this._lastPatIdx = patIdx;
-      const pat = st.patterns[patIdx];
-      const effBpm = (songMode && entry.bpm) ? entry.bpm : st.bpm;
-      this.curBpm = effBpm;
-      const stepDur = 60 / effBpm / 4;
-      // song-trin-indgang: mute-maske, riser, boom
-      if (songMode && this._entryKey !== this.songPtr) {
-        this._entryKey = this.songPtr;
-        const dur = pat.len * (entry.reps || 1) * stepDur;
-        enterEntry(this.rig, st, entry, this.nextTime, dur);
-      }
-      if (!songMode && this._entryKey !== null) {
-        this._entryKey = null;
-        st.tracks.forEach((tr, i) => {
-          tr._emute = false;
-          this.rig.trackGains[i].gain.setTargetAtTime(trackGainVal(st, tr), this.nextTime, 0.01);
-        });
-      }
-      // song-automation: master-filter, master-volumen og pump
-      if (songMode) {
-        if (this.autos.mf.pts.length) {
-          const v = autoAt(this.autos.mf, this.inits.mf, this.songStep + 1);
-          const f = mfFreqs(v);
+        // ----- ARRANGEMENT-afspilning -----
+        const s = this.arrStep;
+        const effBpm = tempoAt(st, s);
+        this.curBpm = effBpm;
+        const stepDur = 60 / effBpm / 4;
+        schedArrFx(this.rig, st, s, this.nextTime, stepDur);
+        // automation (frie breakpoints)
+        const vMf = autoValAt(st.arr.auto.mf, s + 1);
+        if (vMf != null) {
+          const f = mfFreqs(vMf);
           this.rig.lp.frequency.setTargetAtTime(f.lpF, this.nextTime, 0.05);
           this.rig.hp.frequency.setTargetAtTime(f.hpF, this.nextTime, 0.05);
-          this.autoMF = v;
+          this.autoMF = vMf;
         }
-        if (this.autos.vol.pts.length) {
-          const v = autoAt(this.autos.vol, this.inits.vol, this.songStep + 1);
-          this.rig.master.gain.setTargetAtTime(v, this.nextTime, 0.05);
-          this.autoVol = v;
+        const vVol = autoValAt(st.arr.auto.vol, s + 1);
+        if (vVol != null) {
+          this.rig.master.gain.setTargetAtTime(vVol, this.nextTime, 0.05);
+          this.autoVol = vVol;
         }
-        st._pumpAuto = this.autos.pump.pts.length
-          ? autoAt(this.autos.pump, this.inits.pump, this.songStep + 1) : null;
-      }
-      // autofill: sidste gennemloeb af et trin med fillLast
-      const fillAuto = songMode && !!entry.fillLast && this.entryLoop === (entry.reps || 1) - 1;
-      // swing paa de ulige 16.-dele
-      const swingOff = (this.absStep % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
-      schedStepAbs(this.rig, st, pat, this.absStep, this.nextTime + swingOff, stepDur, this.lastFreqs, fillAuto, entry);
-      this.stepLog.push({ t: this.nextTime, step: this.absStep % pat.len, abs: this.absStep, pattern: patIdx,
-        songIdx: songMode ? this.songPtr % st.song.length : null,
-        songStep: songMode ? this.songStep : null });
-      if (this.stepLog.length > 80) this.stepLog.shift();
-      this.nextTime += stepDur;
-      this.absStep++;
-      if (songMode) this.songStep++;
-      if (this.absStep % pat.len === 0) {
-        // koeet pattern-skift anvendes ved pattern-graensen (kvantiseret, playhead bevares)
-        if (!songMode && st._queuedPattern != null) {
-          st.curPattern = st._queuedPattern;
-          st._queuedPattern = null;
-        }
-        if (songMode) {
-          if (st._jumpEntry != null) {
-            // koeet hop (klik paa linjalen under afspilning)
-            this.songPtr = Math.max(0, Math.min(st._jumpEntry, st.song.length - 1));
-            st._jumpEntry = null;
-            this.entryLoop = 0;
-            this.songStep = entryStartSteps(st, this.songPtr);
-            this._entryKey = null;
+        st._pumpAuto = autoValAt(st.arr.auto.pump, s + 1);
+        const swingOff = (s % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
+        schedArrStep(this.rig, st, s, this.nextTime + swingOff, stepDur, this.lastFreqs);
+        this.stepLog.push({ t: this.nextTime, step: s % BAR, abs: s, pattern: null, songStep: s });
+        if (this.stepLog.length > 80) this.stepLog.shift();
+        this.nextTime += stepDur;
+        this.arrStep++;
+        if (this.arrStep % BAR === 0) {
+          // takt-graense: koeet hop, loop-brace, slut
+          if (st._jumpStep != null) {
+            this.arrStep = st._jumpStep;
+            st._jumpStep = null;
           } else {
-            this.entryLoop++;
-            if (this.entryLoop >= (entry.reps || 1)) {
-              this.entryLoop = 0;
-              const loopSet = st.loopA != null && st.loopB != null && st.loopA <= st.loopB
-                && st.loopB < st.song.length;
-              if (loopSet && this.songPtr === st.loopB) {
-                // loop-brace: tilbage til loop-start
-                this.songPtr = st.loopA;
-                this.songStep = entryStartSteps(st, st.loopA);
-                this._entryKey = null;
-              } else {
-                this.songPtr++;
-                if (this.songPtr >= st.song.length) {
-                  if (!st.songLoop) { this.stopAt = this.nextTime; }
-                  else { this.songPtr = 0; this.songStep = 0; this._entryKey = null; }
-                }
-              }
+            const a = st.arr.loopA, b = st.arr.loopB;
+            if (a != null && b != null && b > a && this.arrStep >= b * BAR && this.arrStep - BAR < b * BAR) {
+              this.arrStep = a * BAR;
+            } else if (this.arrStep >= arrLenSteps(st)) {
+              if (!st.songLoop) { this.stopAt = this.nextTime; }
+              else this.arrStep = 0;
             }
           }
+        }
+      } else {
+        // ----- PATTERN-afspilning -----
+        const patIdx = st.curPattern;
+        if (this._lastPatIdx !== null && patIdx !== this._lastPatIdx) {
+          this.absStep = 0; // nyt pattern -> alle spor resynkes (Elektron-stil)
+        }
+        this._lastPatIdx = patIdx;
+        const pat = st.patterns[patIdx];
+        this.curBpm = st.bpm;
+        const stepDur = 60 / st.bpm / 4;
+        const swingOff = (this.absStep % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
+        schedStepAbs(this.rig, st, pat, this.absStep, this.nextTime + swingOff, stepDur, this.lastFreqs);
+        this.stepLog.push({ t: this.nextTime, step: this.absStep % pat.len, abs: this.absStep, pattern: patIdx, songStep: null });
+        if (this.stepLog.length > 80) this.stepLog.shift();
+        this.nextTime += stepDur;
+        this.absStep++;
+        if (this.absStep % pat.len === 0 && st._queuedPattern != null) {
+          st.curPattern = st._queuedPattern;
+          st._queuedPattern = null;
         }
       }
       if (this.stopAt && this.nextTime >= this.stopAt) break;
@@ -640,9 +637,8 @@ export class Player {
     // live-opdatering af delay-tid, master-filter og -volumen (automationen vinder i song-mode)
     this.rig.delay.delayTime.value = delayTimeSec(st, this.curBpm);
     this.rig.fb.gain.value = st.delayFb ?? 0.4;
-    const songAuto = st.mode === 'song' && this.autos;
-    if (!(songAuto && this.autos.mf.pts.length)) setMasterFilter(this.rig, st.masterFilter ?? 0.5);
-    if (!(songAuto && this.autos.vol.pts.length)) this.rig.master.gain.value = st.masterVol ?? 0.9;
+    if (!(songMode && st.arr.auto.mf.length)) setMasterFilter(this.rig, st.masterFilter ?? 0.5);
+    if (!(songMode && st.arr.auto.vol.length)) this.rig.master.gain.value = st.masterVol ?? 0.9;
   }
   refreshTrackGains() {
     if (!this.playing || !this.rig) return;
@@ -694,54 +690,44 @@ export class Player {
 // ---------- offline eksport ----------
 export async function renderWav(st, what = 'song') {
   const sr = 44100;
-  const isSong = what === 'song' && st.song.length > 0;
-  let entries;
-  if (isSong) entries = st.song.map(songEntry);
-  else entries = [{ p: st.curPattern, reps: 2, mutes: null }]; // pattern to gange
-  let totalSec = 0;
-  for (const e of entries) {
-    totalSec += st.patterns[e.p].len * (e.reps || 1) * (60 / ((isSong && e.bpm) || st.bpm) / 4);
-  }
-  const total = totalSec + 3;
-  const ctx = new OfflineAudioContext(2, Math.ceil(total * sr), sr);
-  st.tracks.forEach(tr => { tr._emute = false; });
+  const isSong = what === 'song' && st.arr && st.arr.clips.length > 0;
   const stR = { ...st, _fill: false, _pumpAuto: null };
+  st.tracks.forEach(tr => { tr._emute = false; });
+  let total;
+  if (isSong) total = songDurationSec(st) + 3;
+  else total = st.patterns[st.curPattern].len * 2 * (60 / st.bpm / 4) + 3;
+  const ctx = new OfflineAudioContext(2, Math.ceil(total * sr), sr);
   const rig = await buildRig(ctx, stR);
-  const autos = isSong
-    ? { mf: buildAuto(stR, 'mf'), vol: buildAuto(stR, 'vol'), pump: buildAuto(stR, 'pump') }
-    : { mf: { pts: [] }, vol: { pts: [] }, pump: { pts: [] } };
-  const inits = { mf: st.masterFilter ?? 0.5, vol: st.masterVol ?? 0.9, pump: st.pumpFx ?? 0 };
   const lastFreqs = new Array(st.tracks.length).fill(null);
-  let t = 0.05, absStep = 0, lastPat = null, songStep = 0;
-  for (const e of entries) {
-    const pat = st.patterns[e.p];
-    if (lastPat !== null && e.p !== lastPat) absStep = 0;
-    lastPat = e.p;
-    const reps = e.reps || 1;
-    const stepDur = 60 / ((isSong && e.bpm) || st.bpm) / 4;
-    enterEntry(rig, stR, e, t, pat.len * reps * stepDur);
-    for (let rep = 0; rep < reps; rep++) {
-      const fillAuto = !!e.fillLast && rep === reps - 1;
-      for (let s = 0; s < pat.len; s++) {
-        if (autos.mf.pts.length) {
-          const f = mfFreqs(autoAt(autos.mf, inits.mf, songStep + 1));
-          rig.lp.frequency.setTargetAtTime(f.lpF, t, 0.05);
-          rig.hp.frequency.setTargetAtTime(f.hpF, t, 0.05);
-        }
-        if (autos.vol.pts.length) {
-          rig.master.gain.setTargetAtTime(autoAt(autos.vol, inits.vol, songStep + 1), t, 0.05);
-        }
-        stR._pumpAuto = autos.pump.pts.length ? autoAt(autos.pump, inits.pump, songStep + 1) : null;
-        const swingOff = (absStep % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
-        schedStepAbs(rig, stR, pat, absStep, t + swingOff, stepDur, lastFreqs, fillAuto, isSong ? e : null);
-        t += stepDur;
-        absStep++;
-        songStep++;
+  let t = 0.05;
+  if (isSong) {
+    const totalSteps = arrLenSteps(st);
+    for (let s = 0; s < totalSteps; s++) {
+      const stepDur = 60 / tempoAt(st, s) / 4;
+      schedArrFx(rig, stR, s, t, stepDur);
+      const vMf = autoValAt(st.arr.auto.mf, s + 1);
+      if (vMf != null) {
+        const f = mfFreqs(vMf);
+        rig.lp.frequency.setTargetAtTime(f.lpF, t, 0.05);
+        rig.hp.frequency.setTargetAtTime(f.hpF, t, 0.05);
       }
+      const vVol = autoValAt(st.arr.auto.vol, s + 1);
+      if (vVol != null) rig.master.gain.setTargetAtTime(vVol, t, 0.05);
+      stR._pumpAuto = autoValAt(st.arr.auto.pump, s + 1);
+      const swingOff = (s % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
+      schedArrStep(rig, stR, s, t + swingOff, stepDur, lastFreqs);
+      t += stepDur;
+    }
+  } else {
+    const pat = st.patterns[st.curPattern];
+    const stepDur = 60 / st.bpm / 4;
+    for (let s = 0; s < pat.len * 2; s++) {
+      const swingOff = (s % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
+      schedStepAbs(rig, stR, pat, s, t + swingOff, stepDur, lastFreqs);
+      t += stepDur;
     }
   }
   const buf = await ctx.startRendering();
-  st.tracks.forEach(tr => { tr._emute = false; });
   return encodeWav(buf);
 }
 export function encodeWav(buf) {
