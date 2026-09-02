@@ -461,17 +461,45 @@ export function stepFires(step, loops, fill) {
   if ((step.p ?? 1) < 1 && Math.random() > step.p) return false;
   return true;
 }
-export function trackLen(pattern, tr) {
-  return (pattern.tlen && pattern.tlen[tr]) || pattern.len;
+// en CLIP er den musikalske atom-enhed (Ableton-model): ét spors steps + laengde
+// st.clips = { id: {tr, name, len (16|32), tlen (polymeter|null), steps[32], dis (deaktiveret)} }
+// st.session = { scenes: [{name, slots: [clipId|null ×8]}] }
+export function clipLen(c) { return c.tlen || c.len; }
+// runtime launch-tilstand pr. spor: {play: clipId|null, next: clipId|'stop'|undefined, at: launch-step}
+export function liveOf(st) {
+  if (!st._live || st._live.length !== st.tracks.length) {
+    st._live = st.tracks.map(() => ({ play: null, next: undefined, at: 0 }));
+  }
+  return st._live;
 }
-// planlaeg ét absolut step for alle spor i PATTERN-mode (polymeter pr. spor)
-export function schedStepAbs(rig, st, pattern, absStep, t, stepDur, lastFreqs, forceFill = false) {
-  const loops = Math.floor(absStep / pattern.len);
-  const fill = !!st._fill || forceFill;
+// anvend koeede launches/stops ved takt-graensen (launch-kvantisering = kernen i Ableton-foelelsen)
+export function applyQueued(st, absStep) {
+  const live = liveOf(st);
+  for (const L of live) {
+    if (L.next === undefined) continue;
+    if (L.next === 'stop' || L.next === null) {
+      L.play = null;
+    } else {
+      L.play = L.next;
+      L.at = absStep;
+    }
+    L.next = undefined;
+  }
+}
+// planlaeg ét step i JAM (session): hvert spor spiller sin launched clip
+export function schedJamStep(rig, st, absStep, t, stepDur, lastFreqs) {
+  const fill = !!st._fill;
   const src = st.duckTrack ?? 0;
+  const live = liveOf(st);
   for (let tr = 0; tr < st.tracks.length; tr++) {
-    const idx = absStep % trackLen(pattern, tr);
-    const step = pattern.steps[tr][idx];
+    const L = live[tr];
+    if (!L.play) continue;
+    const clip = st.clips[L.play];
+    if (!clip || clip.dis) continue;
+    const rel = absStep - L.at;
+    const idx = rel % clipLen(clip);
+    const step = clip.steps[idx];
+    const loops = Math.floor(rel / clip.len);
     if (!stepFires(step, loops, fill)) continue;
     const track = st.tracks[tr];
     const r = Math.max(1, Math.min(8, step.r ?? 1));
@@ -530,11 +558,12 @@ export function schedArrStep(rig, st, s, t, stepDur, lastFreqs, entering = false
       if (s === c.at || entering) schedAudioClip(rig, c, s, t, stepDur);
       continue;
     }
-    const pat = st.patterns[c.p];
+    const clipObj = st.clips[c.clip];
+    if (!clipObj || clipObj.dis) continue;
     const rel = s - c.at;
-    const idx = rel % trackLen(pat, tr);
-    const step = pat.steps[tr][idx];
-    const loops = Math.floor(rel / pat.len);
+    const idx = rel % clipLen(clipObj);
+    const step = clipObj.steps[idx];
+    const loops = Math.floor(rel / clipObj.len);
     if (!stepFires(step, loops, fill)) continue;
     const track = st.tracks[tr];
     const vScale = c.lvl ?? 1;
@@ -584,10 +613,9 @@ export class Player {
     st._pumpAuto = null;
     this.rig = await buildRig(ctx, st);
     this.playing = true;
-    this.absStep = 0;      // absolut 16.-dels-taeller i det aktuelle pattern (pattern-mode)
+    this.absStep = 0;      // absolut 16.-dels-taeller i jam (session)
     this.arrStep = Math.max(0, startStep); // absolut step i arrangementet (song-mode)
     this._enter = true;    // foerste step: audio-clips genstartes med korrekt offset
-    this._lastPatIdx = null;
     this.autoMF = null;
     this.autoVol = null;
     this.curBpm = st.bpm;
@@ -655,25 +683,16 @@ export class Player {
           }
         }
       } else {
-        // ----- PATTERN-afspilning -----
-        const patIdx = st.curPattern;
-        if (this._lastPatIdx !== null && patIdx !== this._lastPatIdx) {
-          this.absStep = 0; // nyt pattern -> alle spor resynkes (Elektron-stil)
-        }
-        this._lastPatIdx = patIdx;
-        const pat = st.patterns[patIdx];
+        // ----- JAM (session): hvert spor spiller sin launched clip, koeer anvendes pr. takt -----
         this.curBpm = st.bpm;
         const stepDur = 60 / st.bpm / 4;
+        if (this.absStep % BAR === 0) applyQueued(st, this.absStep);
         const swingOff = (this.absStep % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
-        schedStepAbs(this.rig, st, pat, this.absStep, this.nextTime + swingOff, stepDur, this.lastFreqs);
-        this.stepLog.push({ t: this.nextTime, step: this.absStep % pat.len, abs: this.absStep, pattern: patIdx, songStep: null });
+        schedJamStep(this.rig, st, this.absStep, this.nextTime + swingOff, stepDur, this.lastFreqs);
+        this.stepLog.push({ t: this.nextTime, step: this.absStep % BAR, abs: this.absStep, pattern: null, songStep: null, jam: true });
         if (this.stepLog.length > 80) this.stepLog.shift();
         this.nextTime += stepDur;
         this.absStep++;
-        if (this.absStep % pat.len === 0 && st._queuedPattern != null) {
-          st.curPattern = st._queuedPattern;
-          st._queuedPattern = null;
-        }
       }
       if (this.stopAt && this.nextTime >= this.stopAt) break;
     }
@@ -732,14 +751,18 @@ export class Player {
 }
 
 // ---------- offline eksport ----------
-export async function renderWav(st, what = 'song') {
+// what='song' rendrer arrangementet; what='scene' rendrer scenens clips ×2 gennemloeb
+export async function renderWav(st, what = 'song', sceneIdx = 0) {
   const sr = 44100;
   const isSong = what === 'song' && st.arr && st.arr.clips.length > 0;
+  const scene = st.session && st.session.scenes[sceneIdx];
+  const sceneClips = !isSong && scene ? scene.slots.map(id => (id && st.clips[id]) || null) : [];
+  const sceneLen = Math.max(16, ...sceneClips.filter(Boolean).map(c => c.len));
   const stR = { ...st, _fill: false, _pumpAuto: null };
   st.tracks.forEach(tr => { tr._emute = false; });
   let total;
   if (isSong) total = songDurationSec(st) + 3;
-  else total = st.patterns[st.curPattern].len * 2 * (60 / st.bpm / 4) + 3;
+  else total = sceneLen * 2 * (60 / st.bpm / 4) + 3;
   const ctx = new OfflineAudioContext(2, Math.ceil(total * sr), sr);
   const rig = await buildRig(ctx, stR);
   const lastFreqs = new Array(st.tracks.length).fill(null);
@@ -763,11 +786,12 @@ export async function renderWav(st, what = 'song') {
       t += stepDur;
     }
   } else {
-    const pat = st.patterns[st.curPattern];
+    // scene ×2: brug jam-planlaeggeren med en fastlaast live-tilstand
+    stR._live = sceneClips.map((c, tr) => ({ play: c ? (scene.slots[tr]) : null, next: undefined, at: 0 }));
     const stepDur = 60 / st.bpm / 4;
-    for (let s = 0; s < pat.len * 2; s++) {
+    for (let s = 0; s < sceneLen * 2; s++) {
       const swingOff = (s % 2 === 1) ? (st.swing ?? 0) * stepDur * 0.6 : 0;
-      schedStepAbs(rig, stR, pat, s, t + swingOff, stepDur, lastFreqs);
+      schedJamStep(rig, stR, s, t + swingOff, stepDur, lastFreqs);
       t += stepDur;
     }
   }

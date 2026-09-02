@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Simons Musikmaskine</title>
-<link rel="stylesheet" href="style.css?v=8">
+<link rel="stylesheet" href="style.css?v=9">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%230b0b0d'/><text x='50' y='72' font-size='58' text-anchor='middle' fill='%23c8ff2e' font-family='monospace' font-weight='bold'>S</text></svg>">
 </head>
 <body>
@@ -30,31 +30,31 @@
 </header>
 
 <div id="patternBar">
-  <div id="patternChips"></div>
-  <button id="patLen" title="Pattern-længde">16</button>
-  <button id="patCopy" title="Kopiér pattern">COPY</button>
-  <button id="patPaste" title="Sæt ind i pattern">PASTE</button>
-  <button id="patClear" title="Ryd pattern">CLR</button>
-  <button id="viewToggle" title="Skift mellem step-grid og arrangement-tidslinjen (Tab)">⇄ ARRANGEMENT</button>
-  <div id="modeBox" title="Hvad ▶ spiller: det valgte pattern i ring, eller hele arrangementet. Følger automatisk viewet (Tab)">
-    <button id="modePattern" class="on" title="▶ spiller det valgte pattern i ring — arbejds-mode til at bygge grooves">PATTERN-LOOP</button>
-    <button id="modeSong" title="▶ spiller hele arrangementet (tidslinjen) fra startmarkøren">SANG</button>
-  </div>
+  <span id="viewLabel">JAM</span>
+  <button id="viewToggle" title="Skift mellem JAM (session-grid) og SANG (tidslinjen) — Tab">⇄ SANG-VIEW</button>
+  <span class="barHint" id="barHint">Klik en clip = start (på næste takt) · klik tom slot = ny clip · ▶ i højre side = start hel scene</span>
   <div id="songRow">
     <div id="songChain"></div>
-    <button id="songAdd" title="Tilføj det aktuelle pattern til sangen">+ TILFØJ</button>
+    <button id="songAdd" title="Læg den valgte scenes clips ind bagest i sangen (4 takter)">+ SCENE→SANG</button>
     <button id="songLoopBtn" class="on" title="Loop sangen">∞</button>
-    <button id="jamBtn" title="Optag din live-jam (pattern-skift + mutes) som song-kæde">● JAM</button>
+    <button id="jamBtn" title="Optag din jam (clip- og scene-skift) som sang på tidslinjen">● OPTAG JAM→SANG</button>
   </div>
 </div>
 
-<main id="seq"></main>
+<main id="session"></main>
 <main id="arr" hidden></main>
 
 <footer id="soundPanel">
+  <div id="clipBar" hidden>
+    <span id="cbTitle">CLIP</span>
+    <input id="cbName" maxlength="14" spellcheck="false" title="Clip-navn">
+    <button id="cbLen" title="Clip-længde: 1 eller 2 takter (×2)">16</button>
+    <span id="tlenBox" title="Polymeter: clip'ens egen loop-længde i steps">POLY <button id="tlenDec">−</button><b id="tlenVal">16</b><button id="tlenInc">+</button></span>
+    <button id="cbTools" title="Værktøjer: euclid, rotér, spejl, tilfældig, ryd">🎲</button>
+    <div id="clipSteps" title="Clip'ens steps — redigér mens den looper! Klik = tænd/sluk · shift = blødt · alt = chance · træk lodret = styrke · højreklik = step-lås"></div>
+  </div>
   <div id="spHead">
     <span id="spTrack">—</span>
-    <span id="tlenBox" title="Sporets længde i steps (polymeter)">LÆN <button id="tlenDec">−</button><b id="tlenVal">16</b><button id="tlenInc">+</button></span>
     <span id="lockBadge" hidden>LOCK · STEP <b id="lockStep"></b> <button id="lockClear">RYD LOCK</button> <button id="lockExit">✕</button></span>
     <div id="presetRow"></div>
     <button id="audition" title="Hør lyden">▷ HØR</button>
@@ -65,6 +65,6 @@
 <div id="toast" hidden></div>
 <div id="projList" hidden><div id="projBox"><div id="projHead">PROJEKTER <button id="projClose">✕</button></div><div id="projItems"></div></div></div>
 
-<script type="module" src="app.js?v=8"></script>
+<script type="module" src="app.js?v=9"></script>
 </body>
 </html>
