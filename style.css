@@ -734,3 +734,5 @@ input[type="range"] { accent-color: #4a4a4a; }
 #eucPop input[type="range"], #clipPop input[type="range"] { accent-color: var(--amber); }
 #clipBar { background: transparent; }
 .slot.has .nm, .slot.has .tri { text-shadow: none; }
+#autoBtn { height: 34px; font-weight: 800; color: var(--dim); }
+#autoBtn.on { color: #fff; background: var(--hot); border-color: var(--hot); animation: queueBlink 0.8s steps(2) infinite; }

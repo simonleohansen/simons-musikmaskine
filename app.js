@@ -2,9 +2,9 @@
 // JAM (Session View): spor = kolonner, clips = launchbare celler, scener = rækker.
 // Ét klik = start (kvantiseret til næste takt, blinker i kø). Clips redigeres MENS de looper.
 // SANG (Arrangement): frie clips på tidslinjen. Tab skifter view; det du ser, er det du hører.
-import { Player, renderWav, noteName, cutHz, songEntry, entrySteps, emptyArr, arrLenSteps, tempoAt, songDurationSec, BAR, recBuffers, registerRecBuffer, encodeWav, liveOf, clipLen } from './engine.js?v=11';
+import { Player, renderWav, noteName, cutHz, songEntry, entrySteps, emptyArr, arrLenSteps, tempoAt, songDurationSec, BAR, recBuffers, registerRecBuffer, encodeWav, liveOf, clipLen } from './engine.js?v=12';
 
-const APP_VER = 'v11';
+const APP_VER = 'v12';
 const $ = id => document.getElementById(id);
 const PATTERN_NAMES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 const TRACK_COLORS = ['#ff3d5a', '#ff9f2e', '#ffd83d', '#c8ff2e', '#3dffc0', '#3db9ff', '#a06bff', '#ff5ad0'];
@@ -929,6 +929,7 @@ $('cbTools').onclick = ev => {
     ['TILFÆLDIGT', () => apply(() => {
       for (let i = 0; i < L; i++) c.steps[i] = Math.random() < 0.4 ? stepOn(0.4 + Math.random() * 0.6) : null;
     })],
+    ['RYD LOCKS (automation)', () => apply(() => { for (const s2 of c.steps) if (s2) s2.l = null; })],
     ['RYD', () => apply(() => { for (let i = 0; i < MAX_STEPS; i++) c.steps[i] = null; })],
   ]);
 };
@@ -985,6 +986,7 @@ function pSet(k, v) {
     s.l[k] = v;
   } else {
     curPatch()[k] = v;
+    recordParamLock(k, v); // ✳ AUTO: skriv ogsaa som lock paa den spillende clips aktuelle step
   }
   persist();
 }
@@ -1661,6 +1663,58 @@ function renderArr() {
   el.appendChild(scroller);
 }
 
+// ---------- ✳ AUTO: live automation-optagelse ----------
+let autoRec = false;
+let autoRenderT = 0;
+function autoRenderThrottled(fn) {
+  const now = Date.now();
+  if (now - autoRenderT < 120) return;
+  autoRenderT = now;
+  fn();
+}
+// synth-knapper → step-locks i den spillende clip paa det valgte spor (JAM)
+function recordParamLock(k, v) {
+  if (!autoRec || !player.playing || st.mode !== 'jam') return false;
+  const L = live()[curTrack];
+  const id = L.play;
+  if (!id) return false;
+  const clip = st.clips[id];
+  if (!clip) return false;
+  const pos = player.position();
+  if (!pos) return false;
+  const idx = (((pos.abs - L.at) % clipLen(clip)) + clipLen(clip)) % clipLen(clip);
+  const stp = clip.steps[idx];
+  if (!stp?.on) return true; // playhead paa tomt step: intet at laase, men optag-tilstand aktiv
+  stp.l = { ...(stp.l || {}), [k]: v };
+  persist();
+  if (selClipId === id) autoRenderThrottled(renderClipEditor);
+  return true;
+}
+// master-knapper → breakpoints i automations-banerne (SANG)
+function recordAutoPoint(key, v) {
+  if (!autoRec || !player.playing || st.mode !== 'song') return false;
+  const pos = player.position();
+  if (!pos || pos.songStep == null) return false;
+  const at = Math.round(pos.songStep / (BAR / 2)) * (BAR / 2);
+  const pts = st.arr.auto[key];
+  const ex = pts.find(p => p.at === at);
+  if (ex) ex.v = Math.round(v * 100) / 100;
+  else {
+    pts.push({ at, v: Math.round(v * 100) / 100 });
+    pts.sort((a, b) => a.at - b.at);
+  }
+  persist();
+  if (curView === 'arr') autoRenderThrottled(renderArr);
+  return true;
+}
+$('autoBtn').onclick = () => {
+  autoRec = !autoRec;
+  $('autoBtn').classList.toggle('on', autoRec);
+  toast(autoRec
+    ? '✳ AUTO: skru på knapperne mens musikken spiller — synth-knapper skrives i den spillende clip, MASTER FLT/VOL/PUMP i sangens baner'
+    : 'Automation-optagelse fra');
+};
+
 // ---------- transport ----------
 const playBtn = $('playBtn');
 function togglePlay() {
@@ -1766,10 +1820,10 @@ window.addEventListener('keyup', e => {
 });
 $('bpm').oninput = e => { st.bpm = Math.max(60, Math.min(200, +e.target.value || 132)); persist(); };
 $('swing').oninput = e => { st.swing = +e.target.value; $('swingVal').textContent = Math.round(st.swing * 100) + '%'; persist(); };
-$('pump').oninput = e => { st.pumpFx = +e.target.value; $('pumpVal').textContent = Math.round(st.pumpFx * 100) + '%'; persist(); };
-$('mFilter').oninput = e => { st.masterFilter = +e.target.value; $('mFilterVal').textContent = mfLabel(); persist(); };
+$('pump').oninput = e => { st.pumpFx = +e.target.value; $('pumpVal').textContent = Math.round(st.pumpFx * 100) + '%'; recordAutoPoint('pump', st.pumpFx); persist(); };
+$('mFilter').oninput = e => { st.masterFilter = +e.target.value; $('mFilterVal').textContent = mfLabel(); recordAutoPoint('mf', st.masterFilter); persist(); };
 $('mFilter').ondblclick = () => { st.masterFilter = 0.5; $('mFilter').value = 0.5; $('mFilterVal').textContent = mfLabel(); persist(); };
-$('mVol').oninput = e => { st.masterVol = +e.target.value; persist(); };
+$('mVol').oninput = e => { st.masterVol = +e.target.value; recordAutoPoint('vol', st.masterVol); persist(); };
 function mfLabel() {
   const v = st.masterFilter;
   if (Math.abs(v - 0.5) < 0.01) return 'OPEN';
@@ -2140,7 +2194,7 @@ function tick() {
         if (miniPh) miniPh.hidden = true;
       }
     }
-    if (st.mode === 'song') {
+    if (st.mode === 'song' && !autoRec) {
       if (player.autoMF != null) {
         $('mFilter').value = player.autoMF;
         const v = player.autoMF;
